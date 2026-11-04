@@ -26,6 +26,7 @@ pub fn run() {
             commands::commit_xlsx_import,
             commands::list_transactions,
             commands::edit_transaction,
+            commands::overview_summary,
         ])
         .run(tauri::generate_context!())
         .expect("Ledger failed to start");

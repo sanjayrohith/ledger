@@ -16,6 +16,7 @@ export type CommitResult = { batchId: string; rowsSeen: number; rowsImported: nu
 export type TransactionItem = { id: string; transactionDate: string; direction: string; amountPaise: number; rawDescription: string; merchantOverride: string | null; categoryId: string | null; transactionKind: string; isReviewed: boolean };
 export type TransactionPage = { items: TransactionItem[]; total: number };
 export type XlsxPreview = { preview: CsvPreview; worksheets: string[]; selectedWorksheet: string };
+export type OverviewSummary = { periodStart:string; periodEnd:string; incomePaise:number; expensePaise:number; netCashPaise:number; previousIncomePaise:number; previousExpensePaise:number; unreviewedCount:number; lastImportedAt:string|null; coverageStart:string|null; coverageEnd:string|null; categories:[string,number][] };
 
 export const listAccounts = () => invoke<Account[]>("list_accounts");
 export const createAccount = (draft: AccountDraft) => invoke<Account>("create_account", { draft });
@@ -27,3 +28,4 @@ export const previewXlsxImport = (accountId: string, path: string, worksheet?: s
 export const commitXlsxImport = (accountId: string, path: string, worksheet: string, mapping: CsvMapping) => invoke<CommitResult>("commit_xlsx_import", { accountId, path, worksheet, mapping });
 export const listTransactions = (query: { search?: string; direction?: string; reviewOnly: boolean; limit: number; offset: number }) => invoke<TransactionPage>("list_transactions", { query });
 export const editTransaction = (id: string, edit: { merchantOverride?: string; categoryId?: string; isReviewed: boolean }) => invoke("edit_transaction", { id, edit });
+export const getOverviewSummary = (today:string) => invoke<OverviewSummary>("overview_summary", { today });

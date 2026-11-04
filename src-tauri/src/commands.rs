@@ -3,8 +3,8 @@ use tauri::State;
 use crate::{
     db::{
         repositories::{
-            Account, AccountDraft, AccountRepository, TransactionEdit, TransactionPage,
-            TransactionQuery, TransactionRepository,
+            Account, AccountDraft, AccountRepository, OverviewRepository, OverviewSummary,
+            TransactionEdit, TransactionPage, TransactionQuery, TransactionRepository,
         },
         Database,
     },
@@ -97,5 +97,15 @@ pub fn edit_transaction(
 ) -> Result<(), String> {
     TransactionRepository::new(&database)
         .edit(&id, edit)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn overview_summary(
+    today: String,
+    database: State<'_, Database>,
+) -> Result<OverviewSummary, String> {
+    OverviewRepository::new(&database)
+        .summary(&today)
         .map_err(|error| error.to_string())
 }

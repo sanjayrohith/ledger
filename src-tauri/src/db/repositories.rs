@@ -59,6 +59,72 @@ pub struct TransactionPage {
     pub total: usize,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OverviewSummary {
+    pub period_start: String,
+    pub period_end: String,
+    pub income_paise: i64,
+    pub expense_paise: i64,
+    pub net_cash_paise: i64,
+    pub previous_income_paise: i64,
+    pub previous_expense_paise: i64,
+    pub unreviewed_count: i64,
+    pub last_imported_at: Option<String>,
+    pub coverage_start: Option<String>,
+    pub coverage_end: Option<String>,
+    pub categories: Vec<(String, i64)>,
+}
+
+pub struct OverviewRepository<'database> {
+    database: &'database Database,
+}
+impl<'database> OverviewRepository<'database> {
+    pub fn new(database: &'database Database) -> Self {
+        Self { database }
+    }
+    pub fn summary(&self, today: &str) -> Result<OverviewSummary, DbError> {
+        let month = &today[..7];
+        let (year, month_num) = (
+            month[..4].parse::<i32>().unwrap_or(2000),
+            month[5..7].parse::<u8>().unwrap_or(1),
+        );
+        let first = time::Date::from_calendar_date(
+            year,
+            time::Month::try_from(month_num).unwrap_or(time::Month::January),
+            1,
+        )
+        .map_err(|e| DbError::Validation(e.to_string()))?;
+        let start = first.to_string();
+        let (pm_year, pm_month) = if month_num == 1 {
+            (year - 1, 12)
+        } else {
+            (year, month_num - 1)
+        };
+        let prev_start =
+            time::Date::from_calendar_date(pm_year, time::Month::try_from(pm_month).unwrap(), 1)
+                .unwrap()
+                .to_string();
+        let next_start = if month_num == 12 {
+            time::Date::from_calendar_date(year + 1, time::Month::January, 1)
+        } else {
+            time::Date::from_calendar_date(year, time::Month::try_from(month_num + 1).unwrap(), 1)
+        }
+        .unwrap()
+        .to_string();
+        self.database.with_connection(|connection| {
+            let totals = |from: &str, to: &str| -> Result<(i64,i64), DbError> { Ok(connection.query_row("SELECT COALESCE(SUM(CASE WHEN direction='credit' AND transaction_kind='income' THEN amount_paise ELSE 0 END),0), COALESCE(SUM(CASE WHEN direction='debit' AND transaction_kind IN ('expense','fee') THEN amount_paise ELSE 0 END),0) FROM transactions WHERE transaction_date >= ?1 AND transaction_date < ?2", params![from,to], |r| Ok((r.get(0)?,r.get(1)?)))?) };
+            let (income, expense) = totals(&start, &next_start)?; let (prev_income, prev_expense) = totals(&prev_start, &start)?;
+            let unreviewed = connection.query_row("SELECT COUNT(*) FROM transactions WHERE is_reviewed=0", [], |r| r.get(0))?;
+            let last = connection.query_row("SELECT MAX(imported_at) FROM import_batches WHERE status='committed'", [], |r| r.get(0))?;
+            let coverage = connection.query_row("SELECT MIN(period_start),MAX(period_end) FROM import_batches WHERE status='committed'", [], |r| Ok((r.get::<_,Option<String>>(0)?,r.get::<_,Option<String>>(1)?)))?;
+            let mut stmt = connection.prepare("SELECT COALESCE(c.name,'Uncategorised'),SUM(t.amount_paise) FROM transactions t LEFT JOIN categories c ON c.id=t.category_id WHERE t.transaction_date >= ?1 AND t.transaction_date < ?2 AND t.direction='debit' AND t.transaction_kind IN ('expense','fee') GROUP BY COALESCE(c.name,'Uncategorised') ORDER BY SUM(t.amount_paise) DESC")?;
+            let categories = stmt.query_map(params![start,next_start], |r| Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<Vec<_>,_>>()?;
+            Ok(OverviewSummary { period_start:start, period_end:today.to_owned(), income_paise:income, expense_paise:expense, net_cash_paise:income-expense, previous_income_paise:prev_income, previous_expense_paise:prev_expense, unreviewed_count:unreviewed, last_imported_at:last, coverage_start:coverage.0, coverage_end:coverage.1, categories })
+        })
+    }
+}
+
 pub struct TransactionRepository<'database> {
     database: &'database Database,
 }
@@ -216,7 +282,8 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        AccountDraft, AccountRepository, TransactionEdit, TransactionQuery, TransactionRepository,
+        AccountDraft, AccountRepository, OverviewRepository, TransactionEdit, TransactionQuery,
+        TransactionRepository,
     };
     use crate::db::{Database, DbError};
 
@@ -375,5 +442,60 @@ mod tests {
         assert_eq!(page.total, 50_000);
         assert_eq!(page.items.len(), 50);
         assert!(elapsed.as_millis() < 300, "query took {elapsed:?}");
+    }
+
+    #[test]
+    fn overview_reconciles_income_expense_transfers_unknown_and_coverage() {
+        let database = Database::open_in_memory().expect("synthetic database");
+        let account = AccountRepository::new(&database)
+            .create(AccountDraft {
+                name: "Synthetic overview".into(),
+                institution: None,
+                account_label: None,
+            })
+            .unwrap();
+        database.with_connection(|connection| {
+            connection.execute("INSERT INTO import_batches (id,account_id,source_type,original_filename,imported_at,period_start,period_end,status) VALUES ('b1',?1,'canara_csv','synthetic.csv','2026-03-12T00:00:00Z','2026-02-01','2026-03-10','committed')", [&account.id])?;
+            for (id,date,direction,amount,kind,category) in [
+                ("i1","2026-03-02","credit",10000,"income",None),
+                ("e1","2026-03-03","debit",2500,"expense",Some("00000000-0000-4000-8000-000000000001")),
+                ("f1","2026-03-04","debit",500,"fee",None),
+                ("t1","2026-03-05","debit",3000,"transfer",None),
+                ("u1","2026-03-06","debit",4000,"unknown",None),
+                ("pe","2026-02-06","debit",1000,"expense",None),
+                ("pi","2026-02-07","credit",5000,"income",None),
+            ] {
+                connection.execute("INSERT INTO transactions (id,account_id,transaction_date,direction,amount_paise,raw_description,transaction_kind,category_id,is_reviewed,fingerprint,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,'Synthetic',?6,?7,0,?8,'2026-03-01T00:00:00Z','2026-03-01T00:00:00Z')", params![id,account.id,date,direction,amount,kind,category,format!("{id}-fp")])?;
+            }
+            Ok(())
+        }).unwrap();
+        let overview = OverviewRepository::new(&database)
+            .summary("2026-03-15")
+            .unwrap();
+        assert_eq!(
+            (
+                overview.income_paise,
+                overview.expense_paise,
+                overview.net_cash_paise
+            ),
+            (10000, 3000, 7000)
+        );
+        assert_eq!(
+            (
+                overview.previous_income_paise,
+                overview.previous_expense_paise
+            ),
+            (5000, 1000)
+        );
+        assert_eq!(overview.unreviewed_count, 7);
+        assert_eq!(overview.coverage_start.as_deref(), Some("2026-02-01"));
+        assert_eq!(overview.coverage_end.as_deref(), Some("2026-03-10"));
+        assert_eq!(
+            overview.categories,
+            vec![
+                ("Groceries".to_owned(), 2500),
+                ("Uncategorised".to_owned(), 500)
+            ]
+        );
     }
 }
