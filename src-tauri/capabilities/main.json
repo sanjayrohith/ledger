@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "Ledger's primary window may open a native CSV file picker. Files remain parsed in Rust; no shell or network access is granted.",
+  "windows": ["main"],
+  "permissions": ["dialog:allow-open"]
+}

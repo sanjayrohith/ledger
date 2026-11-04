@@ -1,0 +1,28 @@
+[package]
+name = "ledger"
+version = "0.1.0"
+description = "A private, local-first personal finance desktop app"
+authors = ["Ledger contributors"]
+edition = "2021"
+rust-version = "1.85"
+
+[lib]
+name = "ledger_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+calamine = "0.38.0"
+csv = "1.4.0"
+rusqlite = { version = "0.41.1", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+sha2 = "0.11.1"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2.4.0"
+time = { version = "0.3.55", features = ["formatting", "parsing"] }
+uuid = { version = "1.29.0", features = ["v4"] }
+
+[dev-dependencies]
+rust_xlsxwriter = "0.102.0"
