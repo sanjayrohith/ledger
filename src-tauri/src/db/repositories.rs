@@ -212,9 +212,12 @@ fn optional_text(value: Option<String>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use rusqlite::params;
     use uuid::Uuid;
 
-    use super::{AccountDraft, AccountRepository};
+    use super::{
+        AccountDraft, AccountRepository, TransactionEdit, TransactionQuery, TransactionRepository,
+    };
     use crate::db::{Database, DbError};
 
     #[test]
@@ -265,5 +268,112 @@ mod tests {
             repository.archive("missing"),
             Err(DbError::NotFound)
         ));
+    }
+
+    #[test]
+    fn transaction_pages_filter_and_preserve_user_overrides() {
+        let database = Database::open_in_memory().expect("synthetic database");
+        let account = AccountRepository::new(&database)
+            .create(AccountDraft {
+                name: "Test account".into(),
+                institution: None,
+                account_label: None,
+            })
+            .unwrap();
+        database.with_connection(|connection| {
+            for n in 0..3 {
+                connection.execute("INSERT INTO transactions (id, account_id, transaction_date, direction, amount_paise, raw_description, transaction_kind, is_reviewed, fingerprint, created_at, updated_at) VALUES (?1, ?2, ?3, 'debit', 1250, ?4, 'unknown', ?5, ?6, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')", params![format!("tx-{n}"), account.id, format!("2026-01-0{}", n + 1), format!("Synthetic merchant {n}"), (n == 0) as i64, format!("fp-{n}")])?;
+            }
+            Ok(())
+        }).unwrap();
+        let repo = TransactionRepository::new(&database);
+        let page = repo
+            .page(TransactionQuery {
+                account_id: Some(account.id),
+                search: Some("merchant 1".into()),
+                direction: Some("debit".into()),
+                category_id: None,
+                review_only: true,
+                limit: 1,
+                offset: 0,
+            })
+            .unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items[0].raw_description, "Synthetic merchant 1");
+        let id = page.items[0].id.clone();
+        repo.edit(
+            &id,
+            TransactionEdit {
+                merchant_override: Some("Corrected shop".into()),
+                category_id: None,
+                is_reviewed: true,
+            },
+        )
+        .unwrap();
+        let edited = repo
+            .page(TransactionQuery {
+                account_id: None,
+                search: Some("Corrected shop".into()),
+                direction: None,
+                category_id: None,
+                review_only: false,
+                limit: 10,
+                offset: 0,
+            })
+            .unwrap();
+        assert_eq!(edited.total, 1);
+        assert_eq!(edited.items[0].raw_description, "Synthetic merchant 1");
+        assert_eq!(
+            edited.items[0].merchant_override.as_deref(),
+            Some("Corrected shop")
+        );
+        assert!(edited.items[0].is_reviewed);
+        database
+            .with_connection(|connection| {
+                let source: String = connection.query_row(
+                    "SELECT classification_source FROM transactions WHERE id = ?1",
+                    [&id],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(source, "user");
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn transaction_page_bounds_result_size() {
+        let database = Database::open_in_memory().expect("synthetic database");
+        let account = AccountRepository::new(&database)
+            .create(AccountDraft {
+                name: "Benchmark account".into(),
+                institution: None,
+                account_label: None,
+            })
+            .unwrap();
+        database.with_connection(|connection| {
+            let tx = connection.unchecked_transaction()?;
+            for n in 0..50_000_i64 {
+                tx.execute("INSERT INTO transactions (id, account_id, transaction_date, direction, amount_paise, raw_description, transaction_kind, is_reviewed, fingerprint, created_at, updated_at) VALUES (?1, ?2, '2026-01-01', 'debit', 100, 'Synthetic benchmark', 'unknown', 0, ?3, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')", params![format!("bench-{n}"), account.id, format!("bench-fp-{n}")])?;
+            }
+            tx.commit()?; Ok(())
+        }).unwrap();
+        let started = std::time::Instant::now();
+        let page = TransactionRepository::new(&database)
+            .page(TransactionQuery {
+                account_id: Some(account.id),
+                search: None,
+                direction: None,
+                category_id: None,
+                review_only: false,
+                limit: 50,
+                offset: 0,
+            })
+            .unwrap();
+        let elapsed = started.elapsed();
+        eprintln!("50,000 synthetic rows: first page query {elapsed:?}");
+        assert_eq!(page.total, 50_000);
+        assert_eq!(page.items.len(), 50);
+        assert!(elapsed.as_millis() < 300, "query took {elapsed:?}");
     }
 }

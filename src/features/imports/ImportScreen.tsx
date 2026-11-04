@@ -1,7 +1,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
-import type { Account, CommitResult, CsvMapping, CsvPreview } from "../../app/commands";
-import { commitCsvImport, createAccount, listAccounts, previewCsvImport } from "../../app/commands";
+import type { Account, CommitResult, CsvMapping, CsvPreview, XlsxPreview } from "../../app/commands";
+import { commitCsvImport, commitXlsxImport, createAccount, listAccounts, previewCsvImport, previewXlsxImport } from "../../app/commands";
 import { canCommitImport, selectedCsvPath } from "./importFlow";
 
 const money = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" });
@@ -19,6 +19,9 @@ export function ImportScreen({ onError }: Props) {
   const [path, setPath] = useState("");
   const [preview, setPreview] = useState<CsvPreview | null>(null);
   const [result, setResult] = useState<CommitResult | null>(null);
+  const [worksheet, setWorksheet] = useState("");
+  const [xlsx, setXlsx] = useState(false);
+  const [worksheets, setWorksheets] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => { void loadAccounts(); }, []);
@@ -42,10 +45,11 @@ export function ImportScreen({ onError }: Props) {
   }
 
   async function chooseFile() {
-    const selected = await open({ multiple: false, directory: false, filters: [{ name: "CSV statements", extensions: ["csv"] }] });
+    const selected = await open({ multiple: false, directory: false, filters: [{ name: "Statements", extensions: ["csv", "xlsx"] }] });
     const selectedPath = selectedCsvPath(selected);
     if (!selectedPath) return;
     setPath(selectedPath);
+    const isXlsx = selectedPath.toLowerCase().endsWith(".xlsx"); setXlsx(isXlsx); setWorksheet(""); setWorksheets([]);
     setPreview(null);
     setResult(null);
     if (accountId) await requestPreview(selectedPath);
@@ -55,7 +59,8 @@ export function ImportScreen({ onError }: Props) {
     if (!accountId || !selectedPath) return;
     try {
       setBusy(true);
-      setPreview(await previewCsvImport(accountId, selectedPath, mapping));
+      if (xlsx) { const response: XlsxPreview = await previewXlsxImport(accountId, selectedPath, worksheet || undefined, mapping); setPreview(response.preview); setWorksheets(response.worksheets); setWorksheet(response.selectedWorksheet); }
+      else setPreview(await previewCsvImport(accountId, selectedPath, mapping));
       setResult(null);
     } catch (error) { onError(String(error)); } finally { setBusy(false); }
   }
@@ -64,9 +69,9 @@ export function ImportScreen({ onError }: Props) {
     if (!preview || !canCommitImport(accountId, path, preview)) return;
     try {
       setBusy(true);
-      const committed = await commitCsvImport(accountId, path, preview.mapping);
-      const refreshed = await previewCsvImport(accountId, path, preview.mapping);
-      setPreview(refreshed);
+      const committed = xlsx ? await commitXlsxImport(accountId, path, worksheet, preview.mapping) : await commitCsvImport(accountId, path, preview.mapping);
+      if (xlsx) { const refreshed = await previewXlsxImport(accountId, path, worksheet, preview.mapping); setPreview(refreshed.preview); }
+      else setPreview(await previewCsvImport(accountId, path, preview.mapping));
       setResult(committed);
     } catch (error) { onError(String(error)); } finally { setBusy(false); }
   }
@@ -80,7 +85,7 @@ export function ImportScreen({ onError }: Props) {
   return <section className="import-screen" aria-labelledby="import-heading">
     <div className="page-heading"><p className="eyebrow">Local CSV import</p><h1 id="import-heading">Bring in a statement, deliberately.</h1><p>Preview validation and duplicate candidates before anything reaches your local database.</p></div>
     {accounts.length === 0 ? <div className="panel"><h2>Create a local account first</h2><p>No bank credentials are requested or stored.</p><div className="inline-form"><input value={newAccountName} onChange={(event) => setNewAccountName(event.target.value)} placeholder="e.g. Daily account" aria-label="Account name" /><button onClick={() => void addAccount()} disabled={busy || !newAccountName.trim()}>Add Canara account</button></div></div> : <>
-      <div className="panel import-controls"><label>Import to<select value={accountId} onChange={(event) => { setAccountId(event.target.value); setPreview(null); setResult(null); }}><option value="">Choose an account</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name} · {account.institution}</option>)}</select></label><button onClick={() => void chooseFile()} disabled={busy || !accountId}>Choose CSV file</button>{path && <span className="file-name">Selected: {path.split("/").at(-1)}</span>}</div>
+      <div className="panel import-controls"><label>Import to<select value={accountId} onChange={(event) => { setAccountId(event.target.value); setPreview(null); setResult(null); }}><option value="">Choose an account</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name} · {account.institution}</option>)}</select></label><button onClick={() => void chooseFile()} disabled={busy || !accountId}>Choose CSV or XLSX</button>{path && <span className="file-name">Selected: {path.split("/").at(-1)}</span>}{xlsx && worksheets.length > 0 && <label>Worksheet<select value={worksheet} onChange={(event) => { setWorksheet(event.target.value); void requestPreview(path); }}>{worksheets.map((name) => <option key={name}>{name}</option>)}</select></label>}</div>
       {preview && <Preview preview={preview} busy={busy} onMappingChange={updateMapping} onRefresh={() => void requestPreview()} onCommit={() => void commit()} canCommit={canCommitImport(accountId, path, preview)} />}
       {result && <div className="panel success" role="status"><strong>Import committed locally.</strong><span>{result.rowsImported} rows imported · {result.rowsRejected} rejected · {result.rowsSkippedDuplicate} trusted duplicates skipped.</span></div>}
     </>}
