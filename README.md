@@ -2,11 +2,11 @@
 
 Ledger is a privacy-first personal finance app for macOS. It is a local Tauri desktop application: production builds bundle the React interface into the app and do not start a browser, localhost service, Python process, or network client.
 
-## Milestone 0 status
+## Current status
 
 Ledger now creates its local SQLite database on first launch in macOS Application Support. The empty state intentionally creates no accounts or financial records. The database uses restrictive owner-only permissions where macOS allows them; it is not application-level encrypted.
 
-Milestone 2 adds local CSV import. Select a file through the native picker, choose a local account, review the detected mapping and row validation, then explicitly confirm the atomic commit. The importer supports manually confirmed date, narration, debit, credit, amount/direction, balance, and reference columns. It does not yet claim a hard-coded Canara preset or support XLSX; both need confirmed statement-format evidence or the next milestone.
+Ledger supports local CSV/XLSX imports with preview and duplicate checks, transaction review, local rules, monthly budgets, and a real-data overview. It does not use a bank login, cloud sync, telemetry, or remote assets.
 
 ## Requirements
 
@@ -38,4 +38,13 @@ The macOS `.app` and `.dmg` build artifacts are produced under `src-tauri/target
 
 ## Privacy
 
-Ledger makes no network calls at runtime and includes no telemetry, analytics, remote assets, account login, or financial records in the shell. Future imports will be explicit and local-only.
+Ledger makes no network calls at runtime and includes no telemetry, analytics, remote assets, account login, or financial records in the shell. The SQLite database is stored in macOS Application Support with owner-only permissions where supported. It is not application-level encrypted; use FileVault and a secured macOS account.
+
+## Backup, restore, export, and deletion
+
+- In **Settings**, use **Create backup** to write a self-contained local `.sqlite3` backup. Keep it somewhere protected.
+- **Restore backup** validates SQLite integrity and Ledger migration metadata before it replaces local data.
+- **Export transactions CSV** creates a portable, local CSV of the imported transaction records.
+- **Clear personal financial data** permanently removes accounts, imports, transactions, rules, merchants, and budgets only after typing `DELETE`. Built-in categories remain. Create a backup first if you may need recovery.
+
+To remove Ledger fully, quit the app, move the app bundle to Trash, and delete its `com.local.ledger` folder from your macOS Application Support directory. This is irreversible unless you retained a backup.

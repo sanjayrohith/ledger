@@ -33,6 +33,10 @@ pub fn run() {
             commands::update_merchant_rule,
             commands::list_budget_status,
             commands::upsert_budget,
+            commands::export_transactions_csv,
+            commands::backup_database,
+            commands::restore_database,
+            commands::clear_personal_data,
         ])
         .run(tauri::generate_context!())
         .expect("Ledger failed to start");

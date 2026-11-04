@@ -159,3 +159,28 @@ pub fn upsert_budget(draft: BudgetDraft, database: State<'_, Database>) -> Resul
         .upsert(draft)
         .map_err(|error| error.to_string())
 }
+#[tauri::command]
+pub fn export_transactions_csv(
+    path: String,
+    database: State<'_, Database>,
+) -> Result<usize, String> {
+    database
+        .export_transactions_csv(path)
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
+pub fn backup_database(path: String, database: State<'_, Database>) -> Result<(), String> {
+    database.backup_to(path).map_err(|error| error.to_string())
+}
+#[tauri::command]
+pub fn restore_database(path: String, database: State<'_, Database>) -> Result<(), String> {
+    database
+        .restore_from(path)
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
+pub fn clear_personal_data(database: State<'_, Database>) -> Result<(), String> {
+    database
+        .clear_personal_data()
+        .map_err(|error| error.to_string())
+}
