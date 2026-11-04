@@ -56,6 +56,12 @@ pub struct MerchantRuleDraft {
     pub transaction_kind: Option<String>,
     pub priority: i64,
 }
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MerchantRuleUpdate {
+    pub draft: MerchantRuleDraft,
+    pub is_enabled: bool,
+}
 pub struct RuleRepository<'database> {
     database: &'database Database,
 }
@@ -88,6 +94,23 @@ impl<'database> RuleRepository<'database> {
                 connection.query_row("SELECT id FROM merchants WHERE display_name=?1", params![merchant_name], |row| row.get::<_,String>(0))
             }).transpose()?;
             connection.execute("INSERT INTO merchant_rules (id,name,match_type,pattern,merchant_id,category_id,transaction_kind,priority,is_enabled,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,1,?9,?9)", params![id,name,draft.match_type,pattern,merchant_id,draft.category_id,draft.transaction_kind,draft.priority,now])?;
+            list_rules(connection)?.into_iter().find(|rule| rule.id == id).ok_or(DbError::NotFound)
+        })
+    }
+    pub fn update(&self, id: &str, update: MerchantRuleUpdate) -> Result<MerchantRule, DbError> {
+        let name = required_text(update.draft.name, "rule name")?;
+        let pattern = required_text(update.draft.pattern, "rule pattern")?;
+        if !["contains", "equals", "starts_with"].contains(&update.draft.match_type.as_str()) {
+            return Err(DbError::Validation("rule match type is invalid".into()));
+        }
+        let now = utc_timestamp();
+        self.database.with_connection(|connection| {
+            let merchant_id = optional_text(update.draft.merchant_name).map(|merchant_name| {
+                connection.execute("INSERT INTO merchants (id,display_name,created_at,updated_at) VALUES (?1,?2,?3,?3) ON CONFLICT(display_name) DO UPDATE SET updated_at=excluded.updated_at", params![Uuid::new_v4().to_string(),merchant_name,now])?;
+                connection.query_row("SELECT id FROM merchants WHERE display_name=?1", params![merchant_name], |row| row.get::<_,String>(0))
+            }).transpose()?;
+            let changed = connection.execute("UPDATE merchant_rules SET name=?1,match_type=?2,pattern=?3,merchant_id=?4,category_id=?5,transaction_kind=?6,priority=?7,is_enabled=?8,updated_at=?9 WHERE id=?10",params![name,update.draft.match_type,pattern,merchant_id,update.draft.category_id,update.draft.transaction_kind,update.draft.priority,update.is_enabled as i64,now,id])?;
+            if changed == 0 { return Err(DbError::NotFound); }
             list_rules(connection)?.into_iter().find(|rule| rule.id == id).ok_or(DbError::NotFound)
         })
     }
@@ -522,7 +545,7 @@ mod tests {
 
     use super::{
         AccountDraft, AccountRepository, BudgetDraft, BudgetRepository, MerchantRuleDraft,
-        OverviewRepository, RuleRepository, TransactionEdit, TransactionQuery,
+        MerchantRuleUpdate, OverviewRepository, RuleRepository, TransactionEdit, TransactionQuery,
         TransactionRepository,
     };
     use crate::db::{Database, DbError};
@@ -791,7 +814,7 @@ mod tests {
         let database = Database::open_in_memory().unwrap();
         let category = "00000000-0000-4000-8000-000000000002";
         let repository = RuleRepository::new(&database);
-        repository
+        let first = repository
             .create(MerchantRuleDraft {
                 name: "Later".into(),
                 match_type: "contains".into(),
@@ -824,6 +847,27 @@ mod tests {
         assert_eq!(
             rules[0].explanation,
             "First: matched description starts with `UPI-`"
+        );
+        let changed = repository
+            .update(
+                &first.id,
+                MerchantRuleUpdate {
+                    draft: MerchantRuleDraft {
+                        name: "Edited".into(),
+                        match_type: "equals".into(),
+                        pattern: "UPI-FOOD".into(),
+                        merchant_name: None,
+                        category_id: Some(category.into()),
+                        transaction_kind: Some("expense".into()),
+                        priority: 5,
+                    },
+                    is_enabled: false,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            (changed.name, changed.priority, changed.is_enabled),
+            ("Edited".into(), 5, false)
         );
     }
 }

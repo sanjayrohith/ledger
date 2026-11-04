@@ -30,6 +30,7 @@ pub fn run() {
             commands::list_expense_categories,
             commands::list_merchant_rules,
             commands::create_merchant_rule,
+            commands::update_merchant_rule,
             commands::list_budget_status,
             commands::upsert_budget,
         ])

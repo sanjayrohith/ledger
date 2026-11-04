@@ -35,5 +35,6 @@ export const getOverviewSummary = (today:string) => invoke<OverviewSummary>("ove
 export const listExpenseCategories = () => invoke<Category[]>("list_expense_categories");
 export const listMerchantRules = () => invoke<MerchantRule[]>("list_merchant_rules");
 export const createMerchantRule = (draft: { name:string; matchType:string; pattern:string; merchantName?:string; categoryId?:string; transactionKind?:string; priority:number }) => invoke<MerchantRule>("create_merchant_rule", { draft });
+export const updateMerchantRule = (id:string, update: { draft:{ name:string; matchType:string; pattern:string; merchantName?:string; categoryId?:string; transactionKind?:string; priority:number }; isEnabled:boolean }) => invoke<MerchantRule>("update_merchant_rule", { id, update });
 export const listBudgetStatus = (month:string, today:string) => invoke<BudgetStatus[]>("list_budget_status", { month, today });
 export const upsertBudget = (draft:{categoryId:string; month:string; amountPaise:number}) => invoke("upsert_budget", { draft });

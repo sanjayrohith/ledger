@@ -4,9 +4,9 @@ use crate::{
     db::{
         repositories::{
             Account, AccountDraft, AccountRepository, BudgetDraft, BudgetRepository, BudgetStatus,
-            Category, CategoryRepository, MerchantRule, MerchantRuleDraft, OverviewRepository,
-            OverviewSummary, RuleRepository, TransactionEdit, TransactionPage, TransactionQuery,
-            TransactionRepository,
+            Category, CategoryRepository, MerchantRule, MerchantRuleDraft, MerchantRuleUpdate,
+            OverviewRepository, OverviewSummary, RuleRepository, TransactionEdit, TransactionPage,
+            TransactionQuery, TransactionRepository,
         },
         Database,
     },
@@ -131,6 +131,16 @@ pub fn create_merchant_rule(
 ) -> Result<MerchantRule, String> {
     RuleRepository::new(&database)
         .create(draft)
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
+pub fn update_merchant_rule(
+    id: String,
+    update: MerchantRuleUpdate,
+    database: State<'_, Database>,
+) -> Result<MerchantRule, String> {
+    RuleRepository::new(&database)
+        .update(&id, update)
         .map_err(|error| error.to_string())
 }
 #[tauri::command]
