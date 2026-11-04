@@ -27,6 +27,11 @@ pub fn run() {
             commands::list_transactions,
             commands::edit_transaction,
             commands::overview_summary,
+            commands::list_expense_categories,
+            commands::list_merchant_rules,
+            commands::create_merchant_rule,
+            commands::list_budget_status,
+            commands::upsert_budget,
         ])
         .run(tauri::generate_context!())
         .expect("Ledger failed to start");

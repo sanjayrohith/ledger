@@ -8,8 +8,11 @@ use time::{format_description, Date};
 use uuid::Uuid;
 
 use crate::{
-    db::{Database, DbError},
-    domain::transaction::{parse_positive_paise, utc_timestamp, Direction, MoneyParseError},
+    db::{repositories::RuleRepository, Database, DbError},
+    domain::{
+        rules::first_match,
+        transaction::{parse_positive_paise, utc_timestamp, Direction, MoneyParseError},
+    },
 };
 
 #[derive(Debug)]
@@ -218,6 +221,7 @@ impl<'database> CsvImportService<'database> {
             let mut rows_imported = 0usize;
             let mut rows_skipped_duplicate = 0usize;
             let mut seen_references = HashSet::new();
+            let rules = RuleRepository::enabled_for_import(&transaction)?;
             for row in &parsed.valid_rows {
                 let is_duplicate = trusted_reference_exists(&transaction, account_id, row)?
                     || row
@@ -229,12 +233,17 @@ impl<'database> CsvImportService<'database> {
                     continue;
                 }
 
+                let rule = first_match(&rules, &row.normalized_description);
+                let transaction_kind = rule.as_ref().and_then(|match_| match_.transaction_kind.as_deref()).unwrap_or("unknown");
+                let merchant_id = rule.as_ref().and_then(|match_| match_.merchant_id.as_deref());
+                let category_id = rule.as_ref().and_then(|match_| match_.category_id.as_deref());
+                let classification_source = if rule.is_some() { "rule" } else { "unclassified" };
                 transaction.execute(
                     "INSERT INTO transactions (
                         id, account_id, import_batch_id, transaction_date, value_date, direction,
                         amount_paise, balance_after_paise, raw_description, normalized_description,
-                        reference_raw, transaction_kind, source_row_number, fingerprint, created_at, updated_at
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'unknown', ?12, ?13, ?14, ?14)",
+                        reference_raw, merchant_id, category_id, transaction_kind, classification_source, source_row_number, fingerprint, created_at, updated_at
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?18)",
                     params![
                         Uuid::new_v4().to_string(),
                         account_id,
@@ -247,6 +256,10 @@ impl<'database> CsvImportService<'database> {
                         row.raw_description,
                         row.normalized_description,
                         row.reference_raw,
+                        merchant_id,
+                        category_id,
+                        transaction_kind,
+                        classification_source,
                         row.row_number as i64,
                         row.fingerprint,
                         imported_at,
@@ -744,7 +757,10 @@ mod tests {
 
     use super::CsvImportService;
     use crate::db::{
-        repositories::{AccountDraft, AccountRepository},
+        repositories::{
+            AccountDraft, AccountRepository, MerchantRuleDraft, RuleRepository, TransactionEdit,
+            TransactionRepository,
+        },
         Database,
     };
 
@@ -879,5 +895,81 @@ mod tests {
         assert_eq!((batch_count, transaction_count), (0, 0));
 
         fs::remove_file(path).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn future_rule_imports_do_not_replace_a_manual_override() {
+        let database = Database::open_in_memory().expect("synthetic database");
+        let account_id = account_id(&database);
+        let first_path = write_fixture("Transaction Date,Narration,Withdrawal Amt.,Deposit Amt.,UTR\n2026-02-10,UPI-SYNTHETIC FOOD,125.50,,SYN-001\n");
+        let second_path = write_fixture("Transaction Date,Narration,Withdrawal Amt.,Deposit Amt.,UTR\n2026-02-11,UPI-SYNTHETIC FOOD,225.50,,SYN-002\n");
+        let service = CsvImportService::new(&database);
+        let first_mapping = service
+            .preview(&account_id, first_path.to_str().unwrap(), None)
+            .unwrap()
+            .mapping;
+        service
+            .commit(&account_id, first_path.to_str().unwrap(), first_mapping)
+            .unwrap();
+        let first_id: String = database
+            .with_connection(|connection| {
+                Ok(connection.query_row(
+                    "SELECT id FROM transactions WHERE reference_raw='SYN-001'",
+                    [],
+                    |row| row.get(0),
+                )?)
+            })
+            .unwrap();
+        TransactionRepository::new(&database)
+            .edit(
+                &first_id,
+                TransactionEdit {
+                    merchant_override: Some("My corrected merchant".into()),
+                    category_id: None,
+                    is_reviewed: true,
+                },
+            )
+            .unwrap();
+        RuleRepository::new(&database)
+            .create(MerchantRuleDraft {
+                name: "Synthetic food".into(),
+                match_type: "contains".into(),
+                pattern: "SYNTHETIC FOOD".into(),
+                merchant_name: None,
+                category_id: Some("00000000-0000-4000-8000-000000000002".into()),
+                transaction_kind: Some("expense".into()),
+                priority: 10,
+            })
+            .unwrap();
+        let second_mapping = service
+            .preview(&account_id, second_path.to_str().unwrap(), None)
+            .unwrap()
+            .mapping;
+        service
+            .commit(&account_id, second_path.to_str().unwrap(), second_mapping)
+            .unwrap();
+        let values: Vec<(Option<String>, Option<String>, String)> = database
+            .with_connection(|connection| {
+                let mut statement = connection.prepare("SELECT merchant_override,category_id,classification_source FROM transactions ORDER BY transaction_date")?;
+                let values = statement
+                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(values)
+            })
+            .unwrap();
+        assert_eq!(
+            values[0],
+            (Some("My corrected merchant".into()), None, "user".into())
+        );
+        assert_eq!(
+            values[1],
+            (
+                None,
+                Some("00000000-0000-4000-8000-000000000002".into()),
+                "rule".into()
+            )
+        );
+        fs::remove_file(first_path).unwrap();
+        fs::remove_file(second_path).unwrap();
     }
 }

@@ -17,6 +17,9 @@ export type TransactionItem = { id: string; transactionDate: string; direction: 
 export type TransactionPage = { items: TransactionItem[]; total: number };
 export type XlsxPreview = { preview: CsvPreview; worksheets: string[]; selectedWorksheet: string };
 export type OverviewSummary = { periodStart:string; periodEnd:string; incomePaise:number; expensePaise:number; netCashPaise:number; previousIncomePaise:number; previousExpensePaise:number; unreviewedCount:number; lastImportedAt:string|null; coverageStart:string|null; coverageEnd:string|null; categories:[string,number][] };
+export type Category = { id:string; name:string; kind:string };
+export type MerchantRule = { id:string; name:string; matchType:string; pattern:string; merchantName:string|null; categoryId:string|null; categoryName:string|null; transactionKind:string|null; priority:number; isEnabled:boolean; explanation:string };
+export type BudgetStatus = { categoryId:string; categoryName:string; month:string; amountPaise:number; spentPaise:number; remainingPaise:number; remainingDays:number; remainingPerDayPaise:number };
 
 export const listAccounts = () => invoke<Account[]>("list_accounts");
 export const createAccount = (draft: AccountDraft) => invoke<Account>("create_account", { draft });
@@ -29,3 +32,8 @@ export const commitXlsxImport = (accountId: string, path: string, worksheet: str
 export const listTransactions = (query: { search?: string; direction?: string; reviewOnly: boolean; limit: number; offset: number }) => invoke<TransactionPage>("list_transactions", { query });
 export const editTransaction = (id: string, edit: { merchantOverride?: string; categoryId?: string; isReviewed: boolean }) => invoke("edit_transaction", { id, edit });
 export const getOverviewSummary = (today:string) => invoke<OverviewSummary>("overview_summary", { today });
+export const listExpenseCategories = () => invoke<Category[]>("list_expense_categories");
+export const listMerchantRules = () => invoke<MerchantRule[]>("list_merchant_rules");
+export const createMerchantRule = (draft: { name:string; matchType:string; pattern:string; merchantName?:string; categoryId?:string; transactionKind?:string; priority:number }) => invoke<MerchantRule>("create_merchant_rule", { draft });
+export const listBudgetStatus = (month:string, today:string) => invoke<BudgetStatus[]>("list_budget_status", { month, today });
+export const upsertBudget = (draft:{categoryId:string; month:string; amountPaise:number}) => invoke("upsert_budget", { draft });

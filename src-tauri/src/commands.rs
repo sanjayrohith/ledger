@@ -3,8 +3,10 @@ use tauri::State;
 use crate::{
     db::{
         repositories::{
-            Account, AccountDraft, AccountRepository, OverviewRepository, OverviewSummary,
-            TransactionEdit, TransactionPage, TransactionQuery, TransactionRepository,
+            Account, AccountDraft, AccountRepository, BudgetDraft, BudgetRepository, BudgetStatus,
+            Category, CategoryRepository, MerchantRule, MerchantRuleDraft, OverviewRepository,
+            OverviewSummary, RuleRepository, TransactionEdit, TransactionPage, TransactionQuery,
+            TransactionRepository,
         },
         Database,
     },
@@ -107,5 +109,43 @@ pub fn overview_summary(
 ) -> Result<OverviewSummary, String> {
     OverviewRepository::new(&database)
         .summary(&today)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn list_expense_categories(database: State<'_, Database>) -> Result<Vec<Category>, String> {
+    CategoryRepository::new(&database)
+        .list_expense()
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
+pub fn list_merchant_rules(database: State<'_, Database>) -> Result<Vec<MerchantRule>, String> {
+    RuleRepository::new(&database)
+        .list()
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
+pub fn create_merchant_rule(
+    draft: MerchantRuleDraft,
+    database: State<'_, Database>,
+) -> Result<MerchantRule, String> {
+    RuleRepository::new(&database)
+        .create(draft)
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
+pub fn list_budget_status(
+    month: String,
+    today: String,
+    database: State<'_, Database>,
+) -> Result<Vec<BudgetStatus>, String> {
+    BudgetRepository::new(&database)
+        .status(&month, &today)
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
+pub fn upsert_budget(draft: BudgetDraft, database: State<'_, Database>) -> Result<(), String> {
+    BudgetRepository::new(&database)
+        .upsert(draft)
         .map_err(|error| error.to_string())
 }

@@ -2,6 +2,8 @@ import { useState } from "react";
 import { ImportScreen } from "../features/imports/ImportScreen";
 import { TransactionsScreen } from "../features/transactions/TransactionsScreen";
 import { OverviewScreen } from "../features/overview/OverviewScreen";
+import { BudgetsScreen } from "../features/budgets/BudgetsScreen";
+import { RulesScreen } from "../features/settings/RulesScreen";
 
 export const appCopy = {
   eyebrow: "Private by design",
@@ -39,7 +41,7 @@ export function App() {
           <span className="offline-badge">Offline</span>
         </div>
         {error && <div className="error-banner" role="alert">{error}</div>}
-        {screen === "Import" ? <ImportScreen onError={setError} /> : screen === "Transactions" ? <TransactionsScreen onError={setError} /> : screen === "Overview" ? <OverviewScreen onError={setError} /> : <div className="welcome-card">
+        {screen === "Import" ? <ImportScreen onError={setError} /> : screen === "Transactions" ? <TransactionsScreen onError={setError} /> : screen === "Overview" ? <OverviewScreen onError={setError} /> : screen === "Budgets" ? <BudgetsScreen onError={setError} /> : screen === "Settings" ? <RulesScreen onError={setError} /> : <div className="welcome-card">
           <p className="eyebrow">{appCopy.eyebrow}</p>
           <h1 id="welcome-heading">{appCopy.title}</h1>
           <p className="detail">{appCopy.detail}</p>

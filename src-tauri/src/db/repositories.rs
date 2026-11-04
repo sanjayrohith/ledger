@@ -3,7 +3,246 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::{Database, DbError};
+use crate::domain::rules::EnabledRule;
 use crate::domain::transaction::utc_timestamp;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Category {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+}
+
+pub struct CategoryRepository<'database> {
+    database: &'database Database,
+}
+impl<'database> CategoryRepository<'database> {
+    pub fn new(database: &'database Database) -> Self {
+        Self { database }
+    }
+    pub fn list_expense(&self) -> Result<Vec<Category>, DbError> {
+        self.database.with_connection(|connection| {
+            let mut statement = connection.prepare("SELECT id,name,kind FROM categories WHERE kind='expense' AND is_archived=0 ORDER BY sort_order,name")?;
+            let categories = statement.query_map([], |row| Ok(Category { id: row.get(0)?, name: row.get(1)?, kind: row.get(2)? }))?.collect::<Result<Vec<_>,_>>()?;
+            Ok(categories)
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MerchantRule {
+    pub id: String,
+    pub name: String,
+    pub match_type: String,
+    pub pattern: String,
+    pub merchant_name: Option<String>,
+    pub category_id: Option<String>,
+    pub category_name: Option<String>,
+    pub transaction_kind: Option<String>,
+    pub priority: i64,
+    pub is_enabled: bool,
+    pub explanation: String,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MerchantRuleDraft {
+    pub name: String,
+    pub match_type: String,
+    pub pattern: String,
+    pub merchant_name: Option<String>,
+    pub category_id: Option<String>,
+    pub transaction_kind: Option<String>,
+    pub priority: i64,
+}
+pub struct RuleRepository<'database> {
+    database: &'database Database,
+}
+impl<'database> RuleRepository<'database> {
+    pub fn new(database: &'database Database) -> Self {
+        Self { database }
+    }
+    pub fn list(&self) -> Result<Vec<MerchantRule>, DbError> {
+        self.database.with_connection(list_rules)
+    }
+    pub fn create(&self, draft: MerchantRuleDraft) -> Result<MerchantRule, DbError> {
+        let name = required_text(draft.name, "rule name")?;
+        let pattern = required_text(draft.pattern, "rule pattern")?;
+        if !["contains", "equals", "starts_with"].contains(&draft.match_type.as_str()) {
+            return Err(DbError::Validation("rule match type is invalid".into()));
+        }
+        if let Some(kind) = draft.transaction_kind.as_deref() {
+            if !["expense", "income", "transfer", "refund", "reversal", "fee"].contains(&kind) {
+                return Err(DbError::Validation(
+                    "rule transaction kind is invalid".into(),
+                ));
+            }
+        }
+        let id = Uuid::new_v4().to_string();
+        let now = utc_timestamp();
+        self.database.with_connection(|connection| {
+            let merchant_id = optional_text(draft.merchant_name).map(|merchant_name| {
+                let merchant_id = Uuid::new_v4().to_string();
+                connection.execute("INSERT INTO merchants (id,display_name,created_at,updated_at) VALUES (?1,?2,?3,?3) ON CONFLICT(display_name) DO UPDATE SET updated_at=excluded.updated_at", params![merchant_id,merchant_name,now])?;
+                connection.query_row("SELECT id FROM merchants WHERE display_name=?1", params![merchant_name], |row| row.get::<_,String>(0))
+            }).transpose()?;
+            connection.execute("INSERT INTO merchant_rules (id,name,match_type,pattern,merchant_id,category_id,transaction_kind,priority,is_enabled,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,1,?9,?9)", params![id,name,draft.match_type,pattern,merchant_id,draft.category_id,draft.transaction_kind,draft.priority,now])?;
+            list_rules(connection)?.into_iter().find(|rule| rule.id == id).ok_or(DbError::NotFound)
+        })
+    }
+    pub fn enabled_for_import(
+        connection: &rusqlite::Connection,
+    ) -> Result<Vec<EnabledRule>, DbError> {
+        let mut statement = connection.prepare("SELECT id,name,match_type,pattern,merchant_id,category_id,transaction_kind,priority FROM merchant_rules WHERE is_enabled=1 ORDER BY priority ASC, created_at ASC, id ASC")?;
+        let rules = statement
+            .query_map([], |row| {
+                Ok(EnabledRule {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    match_type: row.get(2)?,
+                    pattern: row.get(3)?,
+                    merchant_id: row.get(4)?,
+                    category_id: row.get(5)?,
+                    transaction_kind: row.get(6)?,
+                    priority: row.get(7)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rules)
+    }
+}
+fn list_rules(connection: &rusqlite::Connection) -> Result<Vec<MerchantRule>, DbError> {
+    let mut statement = connection.prepare("SELECT r.id,r.name,r.match_type,r.pattern,m.display_name,r.category_id,c.name,r.transaction_kind,r.priority,r.is_enabled FROM merchant_rules r LEFT JOIN merchants m ON m.id=r.merchant_id LEFT JOIN categories c ON c.id=r.category_id ORDER BY r.priority,r.created_at,r.id")?;
+    let rules = statement
+        .query_map([], |row| {
+            let name: String = row.get(1)?;
+            let match_type: String = row.get(2)?;
+            let pattern: String = row.get(3)?;
+            Ok(MerchantRule {
+                id: row.get(0)?,
+                explanation: format!(
+                    "{name}: matched description {} `{pattern}`",
+                    match_type.replace('_', " ")
+                ),
+                name,
+                match_type,
+                pattern,
+                merchant_name: row.get(4)?,
+                category_id: row.get(5)?,
+                category_name: row.get(6)?,
+                transaction_kind: row.get(7)?,
+                priority: row.get(8)?,
+                is_enabled: row.get::<_, i64>(9)? == 1,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rules)
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BudgetStatus {
+    pub category_id: String,
+    pub category_name: String,
+    pub month: String,
+    pub amount_paise: i64,
+    pub spent_paise: i64,
+    pub remaining_paise: i64,
+    pub remaining_days: i64,
+    pub remaining_per_day_paise: i64,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BudgetDraft {
+    pub category_id: String,
+    pub month: String,
+    pub amount_paise: i64,
+}
+pub struct BudgetRepository<'database> {
+    database: &'database Database,
+}
+impl<'database> BudgetRepository<'database> {
+    pub fn new(database: &'database Database) -> Self {
+        Self { database }
+    }
+    pub fn upsert(&self, draft: BudgetDraft) -> Result<(), DbError> {
+        if draft.amount_paise < 0 {
+            return Err(DbError::Validation("budget cannot be negative".into()));
+        }
+        validate_month(&draft.month)?;
+        self.database.with_connection(|connection| { connection.execute("INSERT INTO budgets (id,category_id,month,amount_paise,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?5) ON CONFLICT(category_id,month) DO UPDATE SET amount_paise=excluded.amount_paise,updated_at=excluded.updated_at",params![Uuid::new_v4().to_string(),draft.category_id,draft.month,draft.amount_paise,utc_timestamp()])?; Ok(()) })
+    }
+    pub fn status(&self, month: &str, today: &str) -> Result<Vec<BudgetStatus>, DbError> {
+        validate_month(month)?;
+        self.database
+            .with_connection(|connection| budget_status(connection, month, today))
+    }
+}
+fn budget_status(
+    connection: &rusqlite::Connection,
+    month: &str,
+    today: &str,
+) -> Result<Vec<BudgetStatus>, DbError> {
+    let days = remaining_days(month, today)?;
+    let next_month = next_month(month)?;
+    let mut stmt=connection.prepare("SELECT c.id,c.name,b.amount_paise,COALESCE(SUM(CASE WHEN t.direction='debit' AND t.transaction_kind IN ('expense','fee') THEN t.amount_paise ELSE 0 END),0) FROM budgets b JOIN categories c ON c.id=b.category_id LEFT JOIN transactions t ON t.category_id=c.id AND t.transaction_date>=?2 AND t.transaction_date<?3 WHERE b.month=?1 GROUP BY c.id,c.name,b.amount_paise ORDER BY c.sort_order,c.name")?;
+    let status = stmt
+        .query_map(params![month, month, next_month], |row| {
+            let amount: i64 = row.get(2)?;
+            let spent: i64 = row.get(3)?;
+            let remaining = amount - spent;
+            Ok(BudgetStatus {
+                category_id: row.get(0)?,
+                category_name: row.get(1)?,
+                month: month.into(),
+                amount_paise: amount,
+                spent_paise: spent,
+                remaining_paise: remaining,
+                remaining_days: days,
+                remaining_per_day_paise: if days > 0 { remaining / days } else { 0 },
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(status)
+}
+fn date_format() -> Result<Vec<time::format_description::BorrowedFormatItem<'static>>, DbError> {
+    time::format_description::parse_borrowed::<1>("[year]-[month]-[day]")
+        .map_err(|error| DbError::Validation(error.to_string()))
+}
+fn validate_month(month: &str) -> Result<(), DbError> {
+    let format = date_format()?;
+    if month.len() != 7
+        || month.as_bytes().get(4) != Some(&b'-')
+        || time::Date::parse(&format!("{month}-01"), &format).is_err()
+    {
+        return Err(DbError::Validation("month must be YYYY-MM".into()));
+    }
+    Ok(())
+}
+fn next_month(month: &str) -> Result<String, DbError> {
+    let format = date_format()?;
+    let date = time::Date::parse(&format!("{month}-01"), &format)
+        .map_err(|_| DbError::Validation("month must be YYYY-MM".into()))?;
+    Ok((date.replace_day(1).unwrap() + time::Duration::days(32))
+        .replace_day(1)
+        .unwrap()
+        .to_string()[..7]
+        .into())
+}
+fn remaining_days(month: &str, today: &str) -> Result<i64, DbError> {
+    let format = date_format()?;
+    let first = time::Date::parse(&format!("{month}-01"), &format)
+        .map_err(|_| DbError::Validation("month must be YYYY-MM".into()))?;
+    let current = time::Date::parse(today, &format)
+        .map_err(|_| DbError::Validation("today must be YYYY-MM-DD".into()))?;
+    let end = (first + time::Duration::days(32)).replace_day(1).unwrap() - time::Duration::days(1);
+    if current > end {
+        Ok(0)
+    } else {
+        Ok((end - if current < first { first } else { current }).whole_days() + 1)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -282,7 +521,8 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        AccountDraft, AccountRepository, OverviewRepository, TransactionEdit, TransactionQuery,
+        AccountDraft, AccountRepository, BudgetDraft, BudgetRepository, MerchantRuleDraft,
+        OverviewRepository, RuleRepository, TransactionEdit, TransactionQuery,
         TransactionRepository,
     };
     use crate::db::{Database, DbError};
@@ -496,6 +736,94 @@ mod tests {
                 ("Groceries".to_owned(), 2500),
                 ("Uncategorised".to_owned(), 500)
             ]
+        );
+    }
+
+    #[test]
+    fn budgets_keep_paise_exact_and_handle_over_budget_and_past_months() {
+        let database = Database::open_in_memory().unwrap();
+        let account = AccountRepository::new(&database)
+            .create(AccountDraft {
+                name: "Budget account".into(),
+                institution: None,
+                account_label: None,
+            })
+            .unwrap();
+        let groceries = "00000000-0000-4000-8000-000000000001";
+        BudgetRepository::new(&database)
+            .upsert(BudgetDraft {
+                category_id: groceries.into(),
+                month: "2026-02".into(),
+                amount_paise: 10_000,
+            })
+            .unwrap();
+        database.with_connection(|connection| { connection.execute("INSERT INTO transactions (id,account_id,transaction_date,direction,amount_paise,raw_description,transaction_kind,category_id,is_reviewed,fingerprint,created_at,updated_at) VALUES ('budget-expense',?1,'2026-02-10','debit',12500,'Synthetic','expense',?2,1,'budget-fp','2026-02-10T00:00:00Z','2026-02-10T00:00:00Z')",params![account.id,groceries])?; Ok(()) }).unwrap();
+        let current = BudgetRepository::new(&database)
+            .status("2026-02", "2026-02-15")
+            .unwrap();
+        assert_eq!(
+            (
+                current[0].spent_paise,
+                current[0].remaining_paise,
+                current[0].remaining_days,
+                current[0].remaining_per_day_paise
+            ),
+            (12_500, -2_500, 14, -178)
+        );
+        let past = BudgetRepository::new(&database)
+            .status("2026-02", "2026-03-01")
+            .unwrap();
+        assert_eq!(
+            (past[0].remaining_days, past[0].remaining_per_day_paise),
+            (0, 0)
+        );
+        assert!(BudgetRepository::new(&database)
+            .upsert(BudgetDraft {
+                category_id: groceries.into(),
+                month: "2026-02".into(),
+                amount_paise: -1
+            })
+            .is_err());
+    }
+
+    #[test]
+    fn rule_creation_is_explicit_and_ordered() {
+        let database = Database::open_in_memory().unwrap();
+        let category = "00000000-0000-4000-8000-000000000002";
+        let repository = RuleRepository::new(&database);
+        repository
+            .create(MerchantRuleDraft {
+                name: "Later".into(),
+                match_type: "contains".into(),
+                pattern: "SWIGGY".into(),
+                merchant_name: Some("Swiggy".into()),
+                category_id: Some(category.into()),
+                transaction_kind: Some("expense".into()),
+                priority: 20,
+            })
+            .unwrap();
+        repository
+            .create(MerchantRuleDraft {
+                name: "First".into(),
+                match_type: "starts_with".into(),
+                pattern: "UPI-".into(),
+                merchant_name: None,
+                category_id: Some(category.into()),
+                transaction_kind: Some("expense".into()),
+                priority: 10,
+            })
+            .unwrap();
+        let rules = repository.list().unwrap();
+        assert_eq!(
+            rules
+                .iter()
+                .map(|rule| rule.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["First", "Later"]
+        );
+        assert_eq!(
+            rules[0].explanation,
+            "First: matched description starts with `UPI-`"
         );
     }
 }
