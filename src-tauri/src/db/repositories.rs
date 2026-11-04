@@ -336,6 +336,9 @@ pub struct OverviewSummary {
     pub coverage_start: Option<String>,
     pub coverage_end: Option<String>,
     pub categories: Vec<(String, i64)>,
+    pub trend: Vec<(String, i64)>,
+    pub merchants: Vec<(String, i64)>,
+    pub budget_alerts: Vec<(String, i64, i64)>,
 }
 
 pub struct OverviewRepository<'database> {
@@ -382,7 +385,14 @@ impl<'database> OverviewRepository<'database> {
             let coverage = connection.query_row("SELECT MIN(period_start),MAX(period_end) FROM import_batches WHERE status='committed'", [], |r| Ok((r.get::<_,Option<String>>(0)?,r.get::<_,Option<String>>(1)?)))?;
             let mut stmt = connection.prepare("SELECT COALESCE(c.name,'Uncategorised'),SUM(t.amount_paise) FROM transactions t LEFT JOIN categories c ON c.id=t.category_id WHERE t.transaction_date >= ?1 AND t.transaction_date < ?2 AND t.direction='debit' AND t.transaction_kind IN ('expense','fee') GROUP BY COALESCE(c.name,'Uncategorised') ORDER BY SUM(t.amount_paise) DESC")?;
             let categories = stmt.query_map(params![start,next_start], |r| Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<Vec<_>,_>>()?;
-            Ok(OverviewSummary { period_start:start, period_end:today.to_owned(), income_paise:income, expense_paise:expense, net_cash_paise:income-expense, previous_income_paise:prev_income, previous_expense_paise:prev_expense, unreviewed_count:unreviewed, last_imported_at:last, coverage_start:coverage.0, coverage_end:coverage.1, categories })
+            let six_month_start = if month_num <= 5 { time::Date::from_calendar_date(year - 1, time::Month::try_from(month_num + 7).unwrap(), 1).unwrap() } else { time::Date::from_calendar_date(year, time::Month::try_from(month_num - 5).unwrap(), 1).unwrap() }.to_string();
+            let mut trend_stmt = connection.prepare("SELECT substr(transaction_date,1,7),SUM(amount_paise) FROM transactions WHERE transaction_date>=?1 AND transaction_date<?2 AND direction='debit' AND transaction_kind IN ('expense','fee') GROUP BY substr(transaction_date,1,7) ORDER BY 1")?;
+            let trend = trend_stmt.query_map(params![six_month_start,next_start], |r| Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<Vec<_>,_>>()?;
+            let mut merchant_stmt = connection.prepare("SELECT COALESCE(NULLIF(merchant_override,''),raw_description),SUM(amount_paise) FROM transactions WHERE transaction_date>=?1 AND transaction_date<?2 AND direction='debit' AND transaction_kind IN ('expense','fee') GROUP BY COALESCE(NULLIF(merchant_override,''),raw_description) ORDER BY SUM(amount_paise) DESC LIMIT 5")?;
+            let merchants = merchant_stmt.query_map(params![start,next_start], |r| Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<Vec<_>,_>>()?;
+            let mut alerts_stmt = connection.prepare("SELECT c.name,b.amount_paise,COALESCE(SUM(CASE WHEN t.direction='debit' AND t.transaction_kind IN ('expense','fee') THEN t.amount_paise ELSE 0 END),0) FROM budgets b JOIN categories c ON c.id=b.category_id LEFT JOIN transactions t ON t.category_id=c.id AND t.transaction_date>=?1 AND t.transaction_date<?2 WHERE b.month=?3 GROUP BY c.name,b.amount_paise HAVING COALESCE(SUM(CASE WHEN t.direction='debit' AND t.transaction_kind IN ('expense','fee') THEN t.amount_paise ELSE 0 END),0)>b.amount_paise ORDER BY 3-b.amount_paise DESC")?;
+            let budget_alerts = alerts_stmt.query_map(params![start,next_start,month], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?.collect::<Result<Vec<_>,_>>()?;
+            Ok(OverviewSummary { period_start:start, period_end:today.to_owned(), income_paise:income, expense_paise:expense, net_cash_paise:income-expense, previous_income_paise:prev_income, previous_expense_paise:prev_expense, unreviewed_count:unreviewed, last_imported_at:last, coverage_start:coverage.0, coverage_end:coverage.1, categories, trend, merchants, budget_alerts })
         })
     }
 }
@@ -760,6 +770,12 @@ mod tests {
                 ("Uncategorised".to_owned(), 500)
             ]
         );
+        assert_eq!(
+            overview.trend,
+            vec![("2026-02".to_owned(), 1000), ("2026-03".to_owned(), 3000)]
+        );
+        assert_eq!(overview.merchants, vec![("Synthetic".to_owned(), 3000)]);
+        assert!(overview.budget_alerts.is_empty());
     }
 
     #[test]
