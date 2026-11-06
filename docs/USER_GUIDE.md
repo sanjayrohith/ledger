@@ -39,7 +39,9 @@ Deleting also removes anything you reviewed or categorised on those transactions
 
 ## Overview
 
-Shows spent, income and net cash movement for a period, each compared with the previous period. Pick a month, and widen the range to 3, 6 or 12 periods for categories, merchants and the trend. Spending excludes transfers and unknown transactions. "Possible recurring payments" are suggestions based on three or more months with similar amounts. Dismiss any that are wrong.
+Opens on **All months**: a timeline with one bar per month that has data, plus totals, monthly averages, and a table of every month with the change from the month before. Click a bar, or a row in the table, to focus on that month. Then you also get a day-by-day chart and comparisons with the previous month. **All months** returns to the full view.
+
+Charts: where spending went (donut by category), which account money left from (money out and in per account), the busiest weekdays, and top merchants. Imported rows that have no category yet count as money out and show as "Uncategorised" until you add rules or edit rows. Transfers are excluded. "Possible recurring payments" are suggestions based on three or more months with similar amounts. Dismiss any that are wrong.
 
 ## Budgets and rules
 
