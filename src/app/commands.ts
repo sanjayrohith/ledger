@@ -11,11 +11,13 @@ export type CsvMapping = {
   transactionDate: string; description: string; debit?: string; credit?: string; amount?: string;
   direction?: string; valueDate?: string; balance?: string; reference?: string;
 };
+export type StatementCheck = { openingBalancePaise: number | null; closingBalancePaise: number | null; depositsTotalPaise: number; withdrawalsTotalPaise: number; totalsMatch: boolean; everyRowBalances: boolean };
 export type CsvPreview = {
   originalFilename: string; headers: string[]; mapping: CsvMapping; rowsSeen: number; validRows: number;
   invalidRows: { rowNumber: number; reason: string }[];
   duplicateCandidates: { rowNumber: number; kind: "trusted_reference" | "likely_fingerprint" }[];
   rowsNew: number; rowsAlreadyImported: number; newDebitTotalPaise: number; newCreditTotalPaise: number;
+  sourceKind: "csv" | "xlsx" | "pdf"; statementCheck: StatementCheck | null;
   debitTotalPaise: number; creditTotalPaise: number; periodStart: string | null; periodEnd: string | null;
 };
 export type CommitResult = { batchId: string; rowsSeen: number; rowsImported: number; rowsRejected: number; rowsSkippedDuplicate: number };
@@ -68,3 +70,5 @@ export const listImportBatches = () => invoke<ImportBatchSummary[]>("list_import
 export const deleteImportBatch = (id:string) => invoke<number>("delete_import_batch", { id });
 export const rangeSummary = (accountId:string|undefined, from:string, to:string) => invoke<RangeSummary>("range_summary", { accountId, from, to });
 export const deleteTransactionsInRange = (accountId:string|undefined, from:string, to:string) => invoke<number>("delete_transactions_in_range", { accountId, from, to });
+export const previewPdfImport = (accountId:string, path:string, password?:string) => invoke<CsvPreview>("preview_pdf_import", { accountId, path, password });
+export const commitPdfImport = (accountId:string, path:string, password?:string) => invoke<CommitResult>("commit_pdf_import", { accountId, path, password });

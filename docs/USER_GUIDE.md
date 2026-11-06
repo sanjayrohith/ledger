@@ -5,9 +5,19 @@ Ledger keeps everything on this Mac. It never connects to a bank, a server or th
 ## First run
 
 1. Open **Import** and add an account. Ledger defaults to Canara Bank, the format it is built for.
-2. Choose a CSV or XLSX statement. For XLSX, pick the worksheet.
-3. Confirm the column mapping. Check the preview: valid rows, date range, debit and credit totals, invalid rows and duplicate candidates.
+2. Choose a CSV, XLSX or PDF statement. For XLSX, pick the worksheet. For a PDF see below.
+3. For CSV and XLSX, confirm the column mapping. Check the preview: valid rows, date range, debit and credit totals, invalid rows and duplicate candidates.
 4. Select **Confirm and import**. The import is all or nothing.
+
+### Canara PDF statements
+
+Ledger reads the PDF on your Mac. Nothing is uploaded. If the PDF is password-protected, Ledger asks for the password, uses it once and never saves it.
+
+Ledger reads the Date, Particulars, Deposits, Withdrawals and Balance table and checks its work against the statement itself: every row's balance must follow from the row before it, and opening balance + deposits − withdrawals must equal the closing balance printed on the statement. The preview shows this as "Matches the statement's own balances". If it does not match, Ledger refuses to import that PDF and lists the rows it could not confirm.
+
+Scanned or photographed statements have no text to read and cannot be imported. If your PDF layout looks different, Ledger says it does not recognise it instead of guessing.
+
+Use one format per period. A PDF and a CSV of the same transactions word their descriptions differently, so importing both would add the transactions twice. Use Delete import or Delete by date range to undo that.
 
 ### Weekly updates
 

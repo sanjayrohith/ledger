@@ -26,9 +26,16 @@ vi.mock("../app/commands", () => ({
   listImportBatches: vi.fn(),
   deleteImportBatch: vi.fn(),
   rangeSummary: vi.fn(),
-  deleteTransactionsInRange: vi.fn()
+  deleteTransactionsInRange: vi.fn(),
+  previewPdfImport: vi.fn(),
+  commitPdfImport: vi.fn(),
+  previewCsvImport: vi.fn(),
+  commitCsvImport: vi.fn(),
+  previewXlsxImport: vi.fn(),
+  commitXlsxImport: vi.fn()
 }));
 
+import { open } from "@tauri-apps/plugin-dialog";
 import * as commands from "../app/commands";
 import { ImportScreen } from "../features/imports/ImportScreen";
 import { ImportHistoryPanels } from "../features/imports/ImportHistoryPanels";
@@ -250,5 +257,55 @@ describe("Import history and deletion", () => {
     await user.click(await within(panel).findByRole("button", { name: "Delete 4 transactions" }));
     expect(confirm).toHaveBeenCalledWith(expect.stringContaining("1 of them were reviewed or categorised by you"));
     await waitFor(() => expect(mocked.deleteTransactionsInRange).toHaveBeenCalledWith(undefined, "2026-03-10", "2026-03-31"));
+  });
+});
+
+describe("PDF import", () => {
+  const pdfPreview = {
+    originalFilename: "statement.pdf", headers: [], mapping: { transactionDate: "Date", description: "Particulars" },
+    rowsSeen: 42, validRows: 42, invalidRows: [], duplicateCandidates: [], debitTotalPaise: 6240000, creditTotalPaise: 8500000,
+    periodStart: "2026-11-01", periodEnd: "2026-11-30", rowsNew: 11, rowsAlreadyImported: 31,
+    newDebitTotalPaise: 1824000, newCreditTotalPaise: 0, sourceKind: "pdf" as const,
+    statementCheck: { openingBalancePaise: 10000000, closingBalancePaise: 12260000, depositsTotalPaise: 8500000, withdrawalsTotalPaise: 6240000, totalsMatch: true, everyRowBalances: true }
+  };
+
+  beforeEach(() => {
+    vi.mocked(open).mockResolvedValue("/Users/me/statement.pdf");
+    mocked.commitPdfImport.mockResolvedValue({ batchId: "b9", rowsSeen: 42, rowsImported: 11, rowsRejected: 0, rowsSkippedDuplicate: 31 });
+  });
+
+  async function chooseStatement(user: ReturnType<typeof userEvent.setup>) {
+    render(<ImportScreen onError={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: "Choose CSV, XLSX or PDF" }));
+  }
+
+  it("asks for the password of a locked PDF, then shows the balance check and imports only new rows", async () => {
+    const user = userEvent.setup();
+    mocked.previewPdfImport.mockRejectedValueOnce("PDF_PASSWORD_REQUIRED").mockResolvedValue(pdfPreview);
+    await chooseStatement(user);
+    expect(await screen.findByText("This PDF is password-protected")).toBeInTheDocument();
+    await user.type(screen.getByLabelText("PDF password"), "1234abcd");
+    await user.click(screen.getByRole("button", { name: "Unlock" }));
+    expect(mocked.previewPdfImport).toHaveBeenLastCalledWith("a1", "/Users/me/statement.pdf", "1234abcd");
+    expect(await screen.findByText("Matches the statement's own balances")).toBeInTheDocument();
+    expect(screen.queryByText("Confirm column mapping")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Import 11 new rows" }));
+    await waitFor(() => expect(mocked.commitPdfImport).toHaveBeenCalledWith("a1", "/Users/me/statement.pdf", "1234abcd"));
+    expect(await screen.findByText(/11 new rows added · 31 already in Ledger/)).toBeInTheDocument();
+  });
+
+  it("says when the password is wrong and keeps asking", async () => {
+    const user = userEvent.setup();
+    mocked.previewPdfImport.mockRejectedValue("PDF_PASSWORD_WRONG");
+    await chooseStatement(user);
+    expect(await screen.findByText("That password did not work")).toBeInTheDocument();
+  });
+
+  it("blocks importing a PDF that does not match the statement's balances", async () => {
+    const user = userEvent.setup();
+    mocked.previewPdfImport.mockResolvedValue({ ...pdfPreview, statementCheck: { ...pdfPreview.statementCheck, everyRowBalances: false, totalsMatch: false } });
+    await chooseStatement(user);
+    expect(await screen.findByText("Does not match the statement's balances")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Import 11 new rows" })).toBeDisabled();
   });
 });

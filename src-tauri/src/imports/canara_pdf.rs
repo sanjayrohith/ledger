@@ -1130,6 +1130,91 @@ mod tests {
         );
     }
 
+    /// Rebuilds a PDF from a *masked* layout report (see `pdf_layout`), keeping every real x/y
+    /// position but replacing the content with made-up values, then checks the parser finds the
+    /// structure the report shows. Run with LEDGER_MASKED_LAYOUT=/path/to/pdf-layout-masked.txt.
+    #[test]
+    #[ignore = "needs a masked layout file, run on demand"]
+    fn parses_the_structure_of_a_real_masked_layout() {
+        let path = std::env::var("LEDGER_MASKED_LAYOUT").expect("set LEDGER_MASKED_LAYOUT");
+        let report = std::fs::read_to_string(path).unwrap();
+        let mut pages: Vec<PageLines> = Vec::new();
+        let mut sample_amount = 0u32;
+        for line in report.lines() {
+            if line.starts_with("=== page") {
+                pages.push(Vec::new());
+                continue;
+            }
+            let Some(rest) = line.strip_prefix("y=") else {
+                continue;
+            };
+            let Some(page) = pages.last_mut() else {
+                continue;
+            };
+            let mut parts = rest.split(" | ");
+            let y: f64 = parts.next().unwrap().trim().parse().unwrap();
+            let mut cells: Cells = Vec::new();
+            for part in parts {
+                let (position, text) = part.split_once(" \"").unwrap();
+                let text = text.trim_end_matches('"');
+                let x: f64 = position
+                    .trim_start_matches("x=")
+                    .split("..")
+                    .next()
+                    .unwrap()
+                    .parse()
+                    .unwrap();
+                let is_amount =
+                    text.chars().all(|c| c == '9' || c == ',' || c == '.') && text.contains('.');
+                let replaced = if text == "99-99-9999" {
+                    "01-11-2026".to_owned()
+                } else if is_amount {
+                    sample_amount += 1;
+                    format!("{}.00", 100 + sample_amount)
+                } else if text.starts_with("Chq: ") {
+                    format!("Chq: {}", 100_000_000_000u64 + u64::from(sample_amount))
+                } else if let Some(narration) = text.strip_prefix("99-99-9999 ") {
+                    // A date followed by narration in one cell: the date sits at x, the text after it.
+                    cells.push((x, "01-11-2026".to_owned()));
+                    cells.push((106.5, narration.to_owned()));
+                    continue;
+                } else {
+                    text.to_owned()
+                };
+                cells.push((x, replaced));
+            }
+            page.push((PAGE_HEIGHT - y, cells));
+        }
+        let statement = parse(pdf_multi(&pages));
+        let deposits = statement
+            .transactions
+            .iter()
+            .filter(|t| t.deposit_paise.is_some())
+            .count();
+        let withdrawals = statement
+            .transactions
+            .iter()
+            .filter(|t| t.withdrawal_paise.is_some())
+            .count();
+        println!(
+            "transactions {} deposits {deposits} withdrawals {withdrawals}",
+            statement.transactions.len()
+        );
+        println!(
+            "opening {:?} closing {:?}",
+            statement.opening_paise, statement.closing_paise
+        );
+        println!("parse issues {}", statement.issues.len());
+        println!("first narration: {}", statement.transactions[0].narration);
+        assert_eq!(statement.transactions.len(), 42);
+        assert_eq!((deposits, withdrawals), (11, 31));
+        assert!(statement.opening_paise.is_some() && statement.closing_paise.is_some());
+        assert!(statement
+            .transactions
+            .iter()
+            .all(|t| t.narration.starts_with("UPI/")));
+    }
+
     #[test]
     fn only_pdf_files_are_accepted() {
         let database = Database::open_in_memory().unwrap();
