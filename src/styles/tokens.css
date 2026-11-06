@@ -1,17 +1,33 @@
 :root {
   color-scheme: dark;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background: #101312;
-  color: #f4f7f4;
+  font-family: "Geist Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
 
-  --canvas: #101312;
-  --surface: #161a18;
-  --surface-raised: #1c211f;
-  --border: #2a322e;
-  --text: #f4f7f4;
-  --muted: #9aa7a0;
+  /* Graphite ramp */
+  --sidebar: #0f0f10;
+  --canvas: #141415;
+  --surface: #19191b;
+  --surface-raised: #232325;
+  --border: rgb(237 237 237 / 8%);
+  --border-strong: rgb(237 237 237 / 14%);
+
+  /* Three text roles */
+  --text: #ededed;
+  --text-secondary: #a1a1a6;
+  --muted: #85858b;
+
+  /* One accent, used rarely */
   --accent: #78a88b;
   --accent-strong: #9fd0ae;
+  --negative: #e5484d;
+  --negative-text: #f08083;
+  --positive: #4cc38a;
+
+  --font-mono: "Geist Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  background: var(--canvas);
+  color: var(--text);
 }

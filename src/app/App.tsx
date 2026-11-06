@@ -7,7 +7,7 @@ import { RulesScreen } from "../features/settings/RulesScreen";
 
 export const appCopy = {
   eyebrow: "Private by design",
-  title: "A clearer view of your money, kept on this Mac.",
+  title: "A clearer view of your money, kept on this Mac",
   detail:
     "Your local Ledger database is ready. No accounts are connected, and no financial data has been created.",
   status: "Offline local storage ready"
