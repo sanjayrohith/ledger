@@ -49,6 +49,10 @@ pub fn run() {
             commands::dismiss_recurring,
             commands::backup_database_encrypted,
             commands::restore_database_encrypted,
+            commands::list_import_batches,
+            commands::delete_import_batch,
+            commands::range_summary,
+            commands::delete_transactions_in_range,
         ])
         .run(tauri::generate_context!())
         .expect("Ledger failed to start");

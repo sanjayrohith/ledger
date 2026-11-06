@@ -15,6 +15,7 @@ use crate::{
         Database,
     },
     imports::csv::{CommitResult, CsvImportService, CsvMapping, CsvPreview},
+    imports::history::{ImportBatchSummary, ImportHistoryRepository, RangeSummary},
     imports::xlsx::{XlsxImportService, XlsxPreview},
 };
 
@@ -284,5 +285,42 @@ pub fn restore_database_encrypted(
 ) -> Result<(), String> {
     database
         .restore_encrypted_from(path, &passphrase)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn list_import_batches(
+    database: State<'_, Database>,
+) -> Result<Vec<ImportBatchSummary>, String> {
+    ImportHistoryRepository::new(&database)
+        .list()
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
+pub fn delete_import_batch(id: String, database: State<'_, Database>) -> Result<usize, String> {
+    ImportHistoryRepository::new(&database)
+        .delete_batch(&id)
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
+pub fn range_summary(
+    account_id: Option<String>,
+    from: String,
+    to: String,
+    database: State<'_, Database>,
+) -> Result<RangeSummary, String> {
+    ImportHistoryRepository::new(&database)
+        .range_summary(account_id.as_deref(), &from, &to)
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
+pub fn delete_transactions_in_range(
+    account_id: Option<String>,
+    from: String,
+    to: String,
+    database: State<'_, Database>,
+) -> Result<usize, String> {
+    ImportHistoryRepository::new(&database)
+        .delete_range(account_id.as_deref(), &from, &to)
         .map_err(|error| error.to_string())
 }

@@ -1,4 +1,8 @@
-use std::{collections::HashSet, fmt, fs, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt, fs,
+    path::Path,
+};
 
 use csv::{ReaderBuilder, StringRecord};
 use rusqlite::params;
@@ -105,6 +109,12 @@ pub struct CsvPreview {
     pub credit_total_paise: i64,
     pub period_start: Option<String>,
     pub period_end: Option<String>,
+    /// Valid rows that are not yet in Ledger and would be added on commit.
+    pub rows_new: usize,
+    /// Valid rows already in Ledger from an earlier import; skipped on commit.
+    pub rows_already_imported: usize,
+    pub new_debit_total_paise: i64,
+    pub new_credit_total_paise: i64,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -175,8 +185,11 @@ impl<'database> CsvImportService<'database> {
         account_id: &str,
         parsed: ParsedCsv,
     ) -> Result<CsvPreview, ImportError> {
-        let duplicates = self.find_duplicates(account_id, &parsed.valid_rows)?;
-        Ok(build_preview(parsed, duplicates))
+        let plan = self
+            .database
+            .with_connection(|connection| plan_rows(connection, account_id, &parsed.valid_rows))
+            .map_err(ImportError::from)?;
+        Ok(build_preview(parsed, &plan))
     }
 
     pub(crate) fn commit_parsed(
@@ -220,19 +233,13 @@ impl<'database> CsvImportService<'database> {
 
             let mut rows_imported = 0usize;
             let mut rows_skipped_duplicate = 0usize;
-            let mut seen_references = HashSet::new();
+            let plan = plan_rows(&transaction, account_id, &parsed.valid_rows)?;
             let rules = RuleRepository::enabled_for_import(&transaction)?;
-            for row in &parsed.valid_rows {
-                let is_duplicate = trusted_reference_exists(&transaction, account_id, row)?
-                    || row
-                        .reference_raw
-                        .as_ref()
-                        .is_some_and(|reference| !seen_references.insert(reference.to_uppercase()));
-                if is_duplicate {
+            for (row, existing) in parsed.valid_rows.iter().zip(&plan) {
+                if existing.is_some() {
                     rows_skipped_duplicate += 1;
                     continue;
                 }
-
                 let rule = first_match(&rules, &row.normalized_description);
                 let transaction_kind = rule.as_ref().and_then(|match_| match_.transaction_kind.as_deref()).unwrap_or("unknown");
                 let merchant_id = rule.as_ref().and_then(|match_| match_.merchant_id.as_deref());
@@ -284,37 +291,6 @@ impl<'database> CsvImportService<'database> {
             })
         })
         .map_err(ImportError::from)
-    }
-
-    fn find_duplicates(
-        &self,
-        account_id: &str,
-        rows: &[ParsedRow],
-    ) -> Result<Vec<DuplicateCandidate>, ImportError> {
-        self.database
-            .with_connection(|connection| {
-                let mut candidates = Vec::new();
-                let mut seen_references = HashSet::new();
-                for row in rows {
-                    let trusted = trusted_reference_exists(connection, account_id, row)?
-                        || row.reference_raw.as_ref().is_some_and(|reference| {
-                            !seen_references.insert(reference.to_uppercase())
-                        });
-                    if trusted {
-                        candidates.push(DuplicateCandidate {
-                            row_number: row.row_number,
-                            kind: DuplicateKind::TrustedReference,
-                        });
-                    } else if fingerprint_exists(connection, account_id, &row.fingerprint)? {
-                        candidates.push(DuplicateCandidate {
-                            row_number: row.row_number,
-                            kind: DuplicateKind::LikelyFingerprint,
-                        });
-                    }
-                }
-                Ok(candidates)
-            })
-            .map_err(ImportError::from)
     }
 }
 
@@ -387,19 +363,73 @@ pub(crate) fn parse_csv_bytes(
     })
 }
 
-fn build_preview(parsed: ParsedCsv, duplicate_candidates: Vec<DuplicateCandidate>) -> CsvPreview {
-    let debit_total_paise = parsed
+/// Decides, for each row, whether Ledger already holds it (`Some`) or it is new (`None`).
+///
+/// Rows with a reference number are matched on that reference. Rows without one are matched
+/// on date, direction, amount and description by *count*: if the file holds three identical
+/// rows and Ledger already holds two, only the third is new. This drops the overlap between
+/// two exports while keeping genuine repeat purchases such as two identical coffees in a day.
+pub(crate) fn plan_rows(
+    connection: &rusqlite::Connection,
+    account_id: &str,
+    rows: &[ParsedRow],
+) -> Result<Vec<Option<DuplicateKind>>, DbError> {
+    let mut seen_references = HashSet::new();
+    let mut seen_in_file: HashMap<&str, i64> = HashMap::new();
+    let mut stored: HashMap<&str, i64> = HashMap::new();
+    let mut plan = Vec::with_capacity(rows.len());
+    for row in rows {
+        if let Some(reference) = row.reference_raw.as_deref() {
+            let repeated = !seen_references.insert(reference.to_uppercase());
+            let known = repeated || trusted_reference_exists(connection, account_id, row)?;
+            plan.push(known.then_some(DuplicateKind::TrustedReference));
+            continue;
+        }
+        let occurrence = {
+            let count = seen_in_file.entry(row.fingerprint.as_str()).or_insert(0);
+            *count += 1;
+            *count
+        };
+        let in_ledger = match stored.get(row.fingerprint.as_str()) {
+            Some(count) => *count,
+            None => {
+                let count: i64 = connection.query_row(
+                    "SELECT COUNT(*) FROM transactions WHERE account_id = ?1 AND fingerprint = ?2",
+                    params![account_id, row.fingerprint],
+                    |result| result.get(0),
+                )?;
+                stored.insert(row.fingerprint.as_str(), count);
+                count
+            }
+        };
+        plan.push((occurrence <= in_ledger).then_some(DuplicateKind::LikelyFingerprint));
+    }
+    Ok(plan)
+}
+
+fn build_preview(parsed: ParsedCsv, plan: &[Option<DuplicateKind>]) -> CsvPreview {
+    let total = |direction: Direction, only_new: bool| -> i64 {
+        parsed
+            .valid_rows
+            .iter()
+            .zip(plan)
+            .filter(|(row, existing)| {
+                row.direction == direction && (!only_new || existing.is_none())
+            })
+            .map(|(row, _)| row.amount_paise)
+            .sum()
+    };
+    let duplicate_candidates = parsed
         .valid_rows
         .iter()
-        .filter(|row| row.direction == Direction::Debit)
-        .map(|row| row.amount_paise)
-        .sum();
-    let credit_total_paise = parsed
-        .valid_rows
-        .iter()
-        .filter(|row| row.direction == Direction::Credit)
-        .map(|row| row.amount_paise)
-        .sum();
+        .zip(plan)
+        .filter_map(|(row, existing)| {
+            existing.clone().map(|kind| DuplicateCandidate {
+                row_number: row.row_number,
+                kind,
+            })
+        })
+        .collect::<Vec<_>>();
     let period_start = parsed
         .valid_rows
         .iter()
@@ -410,7 +440,14 @@ fn build_preview(parsed: ParsedCsv, duplicate_candidates: Vec<DuplicateCandidate
         .iter()
         .map(|row| row.transaction_date.clone())
         .max();
+    let rows_already_imported = duplicate_candidates.len();
     CsvPreview {
+        debit_total_paise: total(Direction::Debit, false),
+        credit_total_paise: total(Direction::Credit, false),
+        new_debit_total_paise: total(Direction::Debit, true),
+        new_credit_total_paise: total(Direction::Credit, true),
+        rows_new: parsed.valid_rows.len() - rows_already_imported,
+        rows_already_imported,
         original_filename: parsed.filename,
         headers: parsed.headers,
         mapping: parsed.mapping,
@@ -418,8 +455,6 @@ fn build_preview(parsed: ParsedCsv, duplicate_candidates: Vec<DuplicateCandidate
         valid_rows: parsed.valid_rows.len(),
         invalid_rows: parsed.invalid_rows,
         duplicate_candidates,
-        debit_total_paise,
-        credit_total_paise,
         period_start,
         period_end,
     }

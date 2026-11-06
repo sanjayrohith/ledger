@@ -105,3 +105,54 @@ fn fifty_thousand_rows_meet_the_spec_budgets() {
     assert!(page_time.as_millis() <= 300, "page query over budget");
     assert!(summary_time.as_millis() <= 500, "overview over budget");
 }
+
+#[test]
+#[ignore = "performance measurement, run on demand"]
+fn overlapping_reimport_of_rows_without_references_stays_fast() {
+    let mut text = String::from("Transaction Date,Narration,Withdrawal Amt.,Deposit Amt.,UTR\n");
+    for index in 0..ROWS {
+        let day = 1 + index % 28;
+        let month = 1 + (index / 28) % 12;
+        let year = 2023 + (index / 336) % 3;
+        // 200 distinct merchants and few amounts, so many rows share a fingerprint.
+        writeln!(
+            text,
+            "{year}-{month:02}-{day:02},SYNTHETIC MERCHANT {},{}.00,,",
+            index % 200,
+            10 + index % 5
+        )
+        .unwrap();
+    }
+    let database = Database::open_in_memory().unwrap();
+    let account = AccountRepository::new(&database)
+        .create(AccountDraft {
+            name: "Perf".into(),
+            institution: None,
+            account_label: None,
+        })
+        .unwrap();
+    let path = std::env::temp_dir().join(format!("ledger-perf-noref-{}.csv", std::process::id()));
+    fs::write(&path, text).unwrap();
+    let service = CsvImportService::new(&database);
+    let path_text = path.to_str().unwrap();
+    let first = service.preview(&account.id, path_text, None).unwrap();
+    service
+        .commit(&account.id, path_text, first.mapping.clone())
+        .unwrap();
+
+    let started = Instant::now();
+    let again = service
+        .preview(&account.id, path_text, Some(first.mapping.clone()))
+        .unwrap();
+    let committed = service
+        .commit(&account.id, path_text, first.mapping)
+        .unwrap();
+    let elapsed = started.elapsed();
+    println!(
+        "PERF overlapping re-import of {ROWS} rows without references: {elapsed:?} (already {}, new {}, imported {})",
+        again.rows_already_imported, again.rows_new, committed.rows_imported
+    );
+    fs::remove_file(path).unwrap();
+    assert_eq!(committed.rows_imported, 0);
+    assert!(elapsed.as_secs_f64() <= 10.0, "re-import over budget");
+}
