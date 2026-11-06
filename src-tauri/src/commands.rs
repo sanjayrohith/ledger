@@ -14,6 +14,7 @@ use crate::{
         },
         Database,
     },
+    imports::canara_pdf::PdfImportService,
     imports::csv::{CommitResult, CsvImportService, CsvMapping, CsvPreview},
     imports::history::{ImportBatchSummary, ImportHistoryRepository, RangeSummary},
     imports::xlsx::{XlsxImportService, XlsxPreview},
@@ -322,5 +323,28 @@ pub fn delete_transactions_in_range(
 ) -> Result<usize, String> {
     ImportHistoryRepository::new(&database)
         .delete_range(account_id.as_deref(), &from, &to)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn preview_pdf_import(
+    account_id: String,
+    path: String,
+    password: Option<String>,
+    database: State<'_, Database>,
+) -> Result<CsvPreview, String> {
+    PdfImportService::new(&database)
+        .preview(&account_id, &path, password.as_deref())
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
+pub fn commit_pdf_import(
+    account_id: String,
+    path: String,
+    password: Option<String>,
+    database: State<'_, Database>,
+) -> Result<CommitResult, String> {
+    PdfImportService::new(&database)
+        .commit(&account_id, &path, password.as_deref())
         .map_err(|error| error.to_string())
 }

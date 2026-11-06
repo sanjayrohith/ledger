@@ -53,6 +53,8 @@ pub fn run() {
             commands::delete_import_batch,
             commands::range_summary,
             commands::delete_transactions_in_range,
+            commands::preview_pdf_import,
+            commands::commit_pdf_import,
         ])
         .run(tauri::generate_context!())
         .expect("Ledger failed to start");

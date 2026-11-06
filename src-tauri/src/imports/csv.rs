@@ -26,6 +26,10 @@ pub enum ImportError {
     Io(std::io::Error),
     InvalidMapping(String),
     InvalidPath(String),
+    /// The PDF is password-protected and no password was given.
+    PdfPasswordRequired,
+    /// The PDF password was given but did not open the file.
+    PdfPasswordWrong,
 }
 
 impl fmt::Display for ImportError {
@@ -36,6 +40,9 @@ impl fmt::Display for ImportError {
             Self::Io(error) => write!(formatter, "could not read selected file: {error}"),
             Self::InvalidMapping(message) => formatter.write_str(message),
             Self::InvalidPath(message) => formatter.write_str(message),
+            // These two texts are matched by the interface to ask for a password.
+            Self::PdfPasswordRequired => formatter.write_str("PDF_PASSWORD_REQUIRED"),
+            Self::PdfPasswordWrong => formatter.write_str("PDF_PASSWORD_WRONG"),
         }
     }
 }
@@ -115,6 +122,24 @@ pub struct CsvPreview {
     pub rows_already_imported: usize,
     pub new_debit_total_paise: i64,
     pub new_credit_total_paise: i64,
+    /// `csv`, `xlsx` or `pdf`.
+    pub source_kind: String,
+    /// For PDF statements: whether the rows add up to the statement's own balances.
+    pub statement_check: Option<StatementCheck>,
+}
+
+/// Proof that a parsed PDF agrees with the statement's printed balances.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StatementCheck {
+    pub opening_balance_paise: Option<i64>,
+    pub closing_balance_paise: Option<i64>,
+    pub deposits_total_paise: i64,
+    pub withdrawals_total_paise: i64,
+    /// Opening + deposits − withdrawals equals the printed closing balance.
+    pub totals_match: bool,
+    /// Every row's balance follows from the row before it.
+    pub every_row_balances: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -151,6 +176,9 @@ pub(crate) struct ParsedCsv {
     pub(crate) rows_seen: usize,
     pub(crate) valid_rows: Vec<ParsedRow>,
     pub(crate) invalid_rows: Vec<RowIssue>,
+    pub(crate) notes: Option<&'static str>,
+    pub(crate) source_kind: &'static str,
+    pub(crate) statement_check: Option<StatementCheck>,
 }
 
 pub struct CsvImportService<'database> {
@@ -215,8 +243,8 @@ impl<'database> CsvImportService<'database> {
             transaction.execute(
                 "INSERT INTO import_batches (
                     id, account_id, source_type, original_filename, file_sha256, imported_at,
-                    period_start, period_end, rows_seen, rows_rejected, status
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'committed')",
+                    period_start, period_end, rows_seen, rows_rejected, status, notes
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'committed', ?11)",
                 params![
                     batch_id,
                     account_id,
@@ -228,6 +256,7 @@ impl<'database> CsvImportService<'database> {
                     period_end,
                     parsed.rows_seen as i64,
                     parsed.invalid_rows.len() as i64,
+                    parsed.notes,
                 ],
             )?;
 
@@ -360,6 +389,13 @@ pub(crate) fn parse_csv_bytes(
         rows_seen,
         valid_rows,
         invalid_rows,
+        notes: None,
+        source_kind: if source_type == "canara_xlsx" {
+            "xlsx"
+        } else {
+            "csv"
+        },
+        statement_check: None,
     })
 }
 
@@ -457,6 +493,8 @@ fn build_preview(parsed: ParsedCsv, plan: &[Option<DuplicateKind>]) -> CsvPrevie
         duplicate_candidates,
         period_start,
         period_end,
+        source_kind: parsed.source_kind.to_owned(),
+        statement_check: parsed.statement_check,
     }
 }
 
@@ -718,7 +756,7 @@ fn normalize_header(input: &str) -> String {
         .collect()
 }
 
-fn normalize_description(input: &str) -> String {
+pub(crate) fn normalize_description(input: &str) -> String {
     input
         .split_whitespace()
         .collect::<Vec<_>>()
@@ -726,7 +764,7 @@ fn normalize_description(input: &str) -> String {
         .to_ascii_uppercase()
 }
 
-fn fingerprint(
+pub(crate) fn fingerprint(
     date: &str,
     direction: Direction,
     amount_paise: i64,
@@ -748,7 +786,7 @@ fn sha256_hex(input: &[u8]) -> String {
         .collect()
 }
 
-fn direction_text(direction: Direction) -> &'static str {
+pub(crate) fn direction_text(direction: Direction) -> &'static str {
     match direction {
         Direction::Debit => "debit",
         Direction::Credit => "credit",

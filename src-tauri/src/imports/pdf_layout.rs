@@ -162,53 +162,75 @@ pub struct Line {
     pub cells: Vec<Cell>,
 }
 
-/// Groups characters into lines (by baseline) and cells (by horizontal gaps).
-pub fn group_lines(page: &PdfPage) -> Vec<Line> {
-    let mut chars: Vec<&PdfChar> = page
-        .chars
-        .iter()
-        .filter(|c| !c.text.trim().is_empty() || c.text == " ")
-        .collect();
+/// Characters that share a baseline, ordered left to right.
+pub struct CharLine<'a> {
+    pub y: f64,
+    pub chars: Vec<&'a PdfChar>,
+}
+
+/// Groups a page's characters into lines by baseline, ordered from the top of the page.
+pub fn char_lines(page: &PdfPage) -> Vec<CharLine<'_>> {
+    let mut chars: Vec<&PdfChar> = page.chars.iter().collect();
     chars.sort_by(|a, b| a.y.total_cmp(&b.y).then(a.x.total_cmp(&b.x)));
-    let mut lines: Vec<(f64, Vec<&PdfChar>)> = Vec::new();
+    let mut lines: Vec<CharLine<'_>> = Vec::new();
     for ch in chars {
         let tolerance = (ch.size * 0.4).max(1.5);
         match lines.last_mut() {
-            Some((y, members)) if (ch.y - *y).abs() <= tolerance => members.push(ch),
-            _ => lines.push((ch.y, vec![ch])),
+            Some(line) if (ch.y - line.y).abs() <= tolerance => line.chars.push(ch),
+            _ => lines.push(CharLine {
+                y: ch.y,
+                chars: vec![ch],
+            }),
         }
     }
+    for line in &mut lines {
+        line.chars.sort_by(|a, b| a.x.total_cmp(&b.x));
+    }
     lines
+}
+
+/// Joins characters left to right, adding a space where there is a visible gap.
+pub fn join_chars(chars: &[&PdfChar]) -> String {
+    let mut text = String::new();
+    let mut end = f64::NEG_INFINITY;
+    for ch in chars {
+        if !text.is_empty() && ch.x - end > ch.size * 0.15 && !text.ends_with(' ') && ch.text != " "
+        {
+            text.push(' ');
+        }
+        text.push_str(&ch.text);
+        end = end.max(ch.x + ch.width);
+    }
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Groups characters into lines (by baseline) and cells (by horizontal gaps).
+pub fn group_lines(page: &PdfPage) -> Vec<Line> {
+    char_lines(page)
         .into_iter()
-        .map(|(y, mut members)| {
-            members.sort_by(|a, b| a.x.total_cmp(&b.x));
-            let mut cells: Vec<Cell> = Vec::new();
-            for ch in members {
+        .map(|line| {
+            let mut cells: Vec<(f64, f64, Vec<&PdfChar>)> = Vec::new();
+            for ch in line.chars {
                 let end = ch.x + ch.width;
                 let gap_limit = (ch.size * 1.6).max(6.0);
                 match cells.last_mut() {
-                    Some(cell) if ch.x - cell.x_end <= gap_limit => {
-                        if ch.x - cell.x_end > ch.size * 0.15
-                            && !cell.text.ends_with(' ')
-                            && ch.text != " "
-                        {
-                            cell.text.push(' ');
-                        }
-                        cell.text.push_str(&ch.text);
-                        cell.x_end = cell.x_end.max(end);
+                    Some((_, cell_end, members)) if ch.x - *cell_end <= gap_limit => {
+                        members.push(ch);
+                        *cell_end = cell_end.max(end);
                     }
-                    _ => cells.push(Cell {
-                        x_start: ch.x,
-                        x_end: end,
-                        text: ch.text.clone(),
-                    }),
+                    _ => cells.push((ch.x, end, vec![ch])),
                 }
             }
-            for cell in &mut cells {
-                cell.text = cell.text.split_whitespace().collect::<Vec<_>>().join(" ");
-            }
-            cells.retain(|cell| !cell.text.is_empty());
-            Line { y, cells }
+            let cells = cells
+                .into_iter()
+                .map(|(x_start, x_end, members)| Cell {
+                    x_start,
+                    x_end,
+                    text: join_chars(&members),
+                })
+                .filter(|cell| !cell.text.is_empty())
+                .collect::<Vec<_>>();
+            Line { y: line.y, cells }
         })
         .filter(|line| !line.cells.is_empty())
         .collect()
@@ -427,17 +449,14 @@ pub fn masked_layout(pages: &[PdfPage], was_encrypted: bool) -> Result<String, S
 }
 
 #[cfg(test)]
-mod tests {
-    use lopdf::Permissions;
+pub(crate) mod test_support {
     use lopdf::{
         content::{Content, Operation},
-        dictionary, Document, EncryptionState, EncryptionVersion, Object, Stream,
+        dictionary, Document, Object, Stream,
     };
 
-    use super::*;
-
     /// Builds a one-page PDF with text at exact positions (`y` measured from the page bottom).
-    fn pdf(lines: &[(f64, Vec<(f64, &str)>)]) -> Document {
+    pub fn pdf(lines: &[(f64, Vec<(f64, &str)>)]) -> Document {
         let mut doc = Document::with_version("1.5");
         let pages_id = doc.new_object_id();
         let font_id = doc.add_object(
@@ -485,11 +504,26 @@ mod tests {
         doc
     }
 
-    fn bytes(mut doc: Document) -> Vec<u8> {
+    pub fn bytes(mut doc: Document) -> Vec<u8> {
         let mut out = Vec::new();
         doc.save_to(&mut out).unwrap();
         out
     }
+
+    /// Rough width of `text` in 9pt Helvetica, for right-aligning numbers in fixtures.
+    pub fn width_9pt(text: &str) -> f64 {
+        text.chars()
+            .map(|c| if c.is_ascii_digit() { 5.0 } else { 2.5 })
+            .sum()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use lopdf::{Document, EncryptionState, EncryptionVersion, Permissions};
+
+    use super::test_support::{bytes, pdf};
+    use super::*;
 
     fn statement() -> Document {
         pdf(&[
