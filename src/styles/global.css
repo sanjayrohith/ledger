@@ -73,7 +73,8 @@ h1 { max-width: 640px; font-size: 32px; font-weight: 500; line-height: 36px; let
 .panel h2 { margin: 0 0 4px; font-size: 16px; font-weight: 500; line-height: 24px; }
 .panel p { color: var(--text-secondary); }
 .panel > * + * { margin-top: 12px; }
-.panel > h2 + * { margin-top: 4px; }
+.panel > h2 + * { margin-top: 12px; }
+.panel > h2 + p { margin-top: 4px; }
 .panel.destructive { border-color: rgb(229 72 77 / 28%); }
 .panel.destructive button:not(:disabled) { color: #fff; background: var(--negative); }
 .panel.destructive button:hover:not(:disabled) { background: #f0565b; }
@@ -178,6 +179,7 @@ input[type="date"] { color-scheme: dark; }
 .visual-list li:first-child .progress span { background: var(--accent-strong); }
 .progress.over span { background: var(--negative); }
 .budget-list .progress span { background: var(--accent); }
+.budget-list .progress.over span { background: var(--negative); }
 .over-budget { color: var(--negative-text) !important; }
 
 /* Trend chart */
