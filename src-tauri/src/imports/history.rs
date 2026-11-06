@@ -176,7 +176,10 @@ fn validate_range(from: &str, to: &str) -> Result<(), DbError> {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+    };
 
     use super::ImportHistoryRepository;
     use crate::db::{
@@ -191,7 +194,7 @@ mod tests {
         path
     }
 
-    fn import(database: &Database, account: &str, path: &PathBuf) -> (usize, usize, usize) {
+    fn import(database: &Database, account: &str, path: &Path) -> (usize, usize, usize) {
         let service = CsvImportService::new(database);
         let text = path.to_str().unwrap();
         let preview = service.preview(account, text, None).unwrap();

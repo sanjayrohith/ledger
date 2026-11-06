@@ -770,20 +770,6 @@ fn trusted_reference_exists(
     ).map_err(DbError::from)
 }
 
-fn fingerprint_exists(
-    connection: &rusqlite::Connection,
-    account_id: &str,
-    fingerprint: &str,
-) -> Result<bool, DbError> {
-    connection
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM transactions WHERE account_id = ?1 AND fingerprint = ?2)",
-            params![account_id, fingerprint],
-            |result| result.get(0),
-        )
-        .map_err(DbError::from)
-}
-
 #[cfg(test)]
 mod tests {
     use std::{fs, path::PathBuf};

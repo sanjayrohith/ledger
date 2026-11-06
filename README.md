@@ -6,7 +6,7 @@ Ledger is a privacy-first personal finance app for macOS. It is a local Tauri de
 
 Ledger now creates its local SQLite database on first launch in macOS Application Support. The empty state intentionally creates no accounts or financial records. The database uses restrictive owner-only permissions where macOS allows them; it is not application-level encrypted.
 
-Ledger supports local CSV/XLSX imports with preview and duplicate checks, transaction review with date, account, direction, category and review filters, local rules, monthly budgets, a real-data overview with a selectable period and range, recurring-payment suggestions, category and account management, and encrypted backups. It does not use a bank login, cloud sync, telemetry, or remote assets.
+Ledger supports local CSV/XLSX imports with preview and duplicate checks, weekly overlapping imports that add only new rows, import history with delete by upload or date range, transaction review with date, account, direction, category and review filters, local rules, monthly budgets, a real-data overview with a selectable period and range, recurring-payment suggestions, category and account management, and encrypted backups. It does not use a bank login, cloud sync, telemetry, or remote assets.
 
 See [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) for how to use it and [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) for measured results.
 

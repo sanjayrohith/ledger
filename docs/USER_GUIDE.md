@@ -9,7 +9,19 @@ Ledger keeps everything on this Mac. It never connects to a bank, a server or th
 3. Confirm the column mapping. Check the preview: valid rows, date range, debit and credit totals, invalid rows and duplicate candidates.
 4. Select **Confirm and import**. The import is all or nothing.
 
-Importing the same file again skips rows with a trusted reference and lists likely duplicates for you to judge.
+### Weekly updates
+
+Upload each new statement even though it repeats earlier weeks. Ledger compares every row with what it already holds and adds only the new ones. The preview shows "11 new of 42 rows" with the amounts of the new rows, so you can check them against your statement before importing.
+
+Rows are matched by reference number when the statement has one. Otherwise they are matched by date, direction, amount and description, counting duplicates. If you bought two identical coffees on one day and the file lists two, both are kept the first time and neither is added again later.
+
+Matching is per account. If the bank changes how it words a description between exports, those rows look new and would be added twice. Delete that import and upload again, or delete the date range first.
+
+### Deleting and re-uploading
+
+Under the preview, **Import history** lists every upload with how many rows it added. **Delete import** removes the transactions that upload added. **Delete by date range** removes everything between two dates, for one account or all of them, and shows the count first.
+
+Deleting also removes anything you reviewed or categorised on those transactions, and the confirmation tells you how many. If a later file repeated rows that an earlier upload added, deleting the earlier upload removes those rows too. Upload the later file again to bring them back.
 
 ## Reviewing transactions
 

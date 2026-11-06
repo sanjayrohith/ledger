@@ -22,11 +22,16 @@ vi.mock("../app/commands", () => ({
   renameCategory: vi.fn(),
   archiveCategory: vi.fn(),
   backupDatabaseEncrypted: vi.fn(),
-  restoreDatabaseEncrypted: vi.fn()
+  restoreDatabaseEncrypted: vi.fn(),
+  listImportBatches: vi.fn(),
+  deleteImportBatch: vi.fn(),
+  rangeSummary: vi.fn(),
+  deleteTransactionsInRange: vi.fn()
 }));
 
 import * as commands from "../app/commands";
 import { ImportScreen } from "../features/imports/ImportScreen";
+import { ImportHistoryPanels } from "../features/imports/ImportHistoryPanels";
 import { OverviewScreen } from "../features/overview/OverviewScreen";
 import { ManagementPanels } from "../features/settings/ManagementPanels";
 import { TransactionsScreen } from "../features/transactions/TransactionsScreen";
@@ -87,6 +92,12 @@ beforeEach(() => {
   mocked.dismissRecurring.mockResolvedValue(undefined);
   mocked.getSettings.mockResolvedValue({ firstDayOfMonth: 1, currency: "INR", databasePath: "/data/ledger.sqlite3" });
   mocked.setFirstDayOfMonth.mockResolvedValue(undefined);
+  mocked.listImportBatches.mockResolvedValue([
+    { id: "b1", accountId: "a1", accountName: "Daily account", filename: "week-2.csv", importedAt: "2026-03-09T10:00:00Z", periodStart: "2026-03-01", periodEnd: "2026-03-08", rowsSeen: 20, rowsImported: 5, rowsSkippedDuplicate: 15, rowsRejected: 0, transactionsRemaining: 5, editedByYou: 2 }
+  ]);
+  mocked.deleteImportBatch.mockResolvedValue(5);
+  mocked.rangeSummary.mockResolvedValue({ count: 4, editedByYou: 1, debitTotalPaise: 250000, creditTotalPaise: 0 });
+  mocked.deleteTransactionsInRange.mockResolvedValue(4);
 });
 afterEach(cleanup);
 
@@ -204,5 +215,40 @@ describe("Import screen", () => {
     render(<ImportScreen onError={vi.fn()} />);
     expect(await screen.findByText("Create a local account first")).toBeInTheDocument();
     expect(screen.getByText("No bank credentials are requested or stored.")).toBeInTheDocument();
+  });
+});
+
+describe("Import history and deletion", () => {
+  it("shows what each upload added and only deletes an import after confirmation", async () => {
+    const user = userEvent.setup();
+    const onChanged = vi.fn();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<ImportHistoryPanels onError={vi.fn()} refreshKey="" onChanged={onChanged} />);
+    expect(await screen.findByText(/5 added · 15 already in Ledger · 5 remain/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Delete import" }));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("2 you reviewed or categorised"));
+    expect(mocked.deleteImportBatch).not.toHaveBeenCalled();
+    confirm.mockReturnValue(true);
+    await user.click(screen.getByRole("button", { name: "Delete import" }));
+    await waitFor(() => expect(mocked.deleteImportBatch).toHaveBeenCalledWith("b1"));
+    expect(onChanged).toHaveBeenCalled();
+  });
+
+  it("previews a date range before deleting it and rejects a backwards range", async () => {
+    const user = userEvent.setup();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<ImportHistoryPanels onError={vi.fn()} refreshKey="" onChanged={vi.fn()} />);
+    const panel = (await screen.findByRole("heading", { name: "Delete by date range" })).closest(".panel") as HTMLElement;
+    const deleteButton = within(panel).getByRole("button", { name: "Delete" });
+    expect(deleteButton).toBeDisabled();
+    await user.type(within(panel).getByLabelText("From"), "2026-03-10");
+    await user.type(within(panel).getByLabelText("To"), "2026-03-01");
+    expect(within(panel).getByText("The start date is after the end date.")).toBeInTheDocument();
+    expect(mocked.rangeSummary).not.toHaveBeenCalled();
+    await user.clear(within(panel).getByLabelText("To"));
+    await user.type(within(panel).getByLabelText("To"), "2026-03-31");
+    await user.click(await within(panel).findByRole("button", { name: "Delete 4 transactions" }));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("1 of them were reviewed or categorised by you"));
+    await waitFor(() => expect(mocked.deleteTransactionsInRange).toHaveBeenCalledWith(undefined, "2026-03-10", "2026-03-31"));
   });
 });

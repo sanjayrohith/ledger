@@ -15,6 +15,7 @@ export type CsvPreview = {
   originalFilename: string; headers: string[]; mapping: CsvMapping; rowsSeen: number; validRows: number;
   invalidRows: { rowNumber: number; reason: string }[];
   duplicateCandidates: { rowNumber: number; kind: "trusted_reference" | "likely_fingerprint" }[];
+  rowsNew: number; rowsAlreadyImported: number; newDebitTotalPaise: number; newCreditTotalPaise: number;
   debitTotalPaise: number; creditTotalPaise: number; periodStart: string | null; periodEnd: string | null;
 };
 export type CommitResult = { batchId: string; rowsSeen: number; rowsImported: number; rowsRejected: number; rowsSkippedDuplicate: number };
@@ -60,3 +61,10 @@ export const recurringSuggestions = () => invoke<RecurringSuggestion[]>("recurri
 export const dismissRecurring = (merchantKey:string) => invoke("dismiss_recurring", { merchantKey });
 export const backupDatabaseEncrypted = (path:string, passphrase:string) => invoke("backup_database_encrypted", { path, passphrase });
 export const restoreDatabaseEncrypted = (path:string, passphrase:string) => invoke("restore_database_encrypted", { path, passphrase });
+
+export type ImportBatchSummary = { id: string; accountId: string; accountName: string; filename: string; importedAt: string; periodStart: string | null; periodEnd: string | null; rowsSeen: number; rowsImported: number; rowsSkippedDuplicate: number; rowsRejected: number; transactionsRemaining: number; editedByYou: number };
+export type RangeSummary = { count: number; editedByYou: number; debitTotalPaise: number; creditTotalPaise: number };
+export const listImportBatches = () => invoke<ImportBatchSummary[]>("list_import_batches");
+export const deleteImportBatch = (id:string) => invoke<number>("delete_import_batch", { id });
+export const rangeSummary = (accountId:string|undefined, from:string, to:string) => invoke<RangeSummary>("range_summary", { accountId, from, to });
+export const deleteTransactionsInRange = (accountId:string|undefined, from:string, to:string) => invoke<number>("delete_transactions_in_range", { accountId, from, to });
