@@ -580,7 +580,33 @@ impl<'database> TransactionRepository<'database> {
         })
     }
     pub fn edit(&self, id: &str, edit: TransactionEdit) -> Result<(), DbError> {
-        self.database.with_connection(|connection| { let count = connection.execute("UPDATE transactions SET merchant_override = ?1, category_id = ?2, is_reviewed = ?3, classification_source = 'user', updated_at = ?4 WHERE id = ?5", params![optional_text(edit.merchant_override), edit.category_id, edit.is_reviewed as i64, utc_timestamp(), id])?; if count == 0 { return Err(DbError::NotFound); } Ok(()) })
+        self.database.with_connection(|connection| {
+            let category_id = edit.category_id.filter(|value| !value.is_empty());
+            let category_kind: Option<String> = match &category_id {
+                Some(category) => connection
+                    .query_row("SELECT kind FROM categories WHERE id = ?1", [category], |row| row.get(0))
+                    .map_err(|_| DbError::Validation("unknown category".into()))
+                    .map(Some)?,
+                None => None,
+            };
+            let (direction, current_kind): (String, String) = connection
+                .query_row("SELECT direction, transaction_kind FROM transactions WHERE id = ?1", [id], |row| Ok((row.get(0)?, row.get(1)?)))
+                .map_err(|error| match error {
+                    rusqlite::Error::QueryReturnedNoRows => DbError::NotFound,
+                    other => DbError::Sql(other),
+                })?;
+            // Categorising an unclassified transaction resolves it, so it counts in totals.
+            let resolved_kind = match (current_kind.as_str(), category_kind.as_deref(), direction.as_str()) {
+                ("unknown", Some("expense"), "debit") => "expense",
+                ("unknown", Some("income"), "credit") => "income",
+                (kind, _, _) => kind,
+            };
+            connection.execute(
+                "UPDATE transactions SET merchant_override = ?1, category_id = ?2, is_reviewed = ?3, transaction_kind = ?4, classification_source = 'user', updated_at = ?5 WHERE id = ?6",
+                params![optional_text(edit.merchant_override), category_id, edit.is_reviewed as i64, resolved_kind, utc_timestamp(), id],
+            )?;
+            Ok(())
+        })
     }
 }
 
@@ -1056,6 +1082,74 @@ mod tests {
             }
             Ok(())
         }).unwrap();
+    }
+
+    #[test]
+    fn categorising_an_unknown_transaction_resolves_its_kind_and_empty_category_clears_it() {
+        let database = Database::open_in_memory().unwrap();
+        seed_tx(&database, &[("u", "2026-03-02", "debit", 500, "unknown")]);
+        let repo = TransactionRepository::new(&database);
+        repo.edit(
+            "u",
+            TransactionEdit {
+                merchant_override: None,
+                category_id: Some("00000000-0000-4000-8000-000000000001".into()),
+                is_reviewed: true,
+            },
+        )
+        .unwrap();
+        let kind = |database: &Database| -> String {
+            database
+                .with_connection(|c| {
+                    Ok(c.query_row(
+                        "SELECT transaction_kind FROM transactions WHERE id='u'",
+                        [],
+                        |r| r.get(0),
+                    )?)
+                })
+                .unwrap()
+        };
+        assert_eq!(kind(&database), "expense");
+        repo.edit(
+            "u",
+            TransactionEdit {
+                merchant_override: None,
+                category_id: Some(String::new()),
+                is_reviewed: true,
+            },
+        )
+        .unwrap();
+        let cleared: Option<String> = database
+            .with_connection(|c| {
+                Ok(c.query_row(
+                    "SELECT category_id FROM transactions WHERE id='u'",
+                    [],
+                    |r| r.get(0),
+                )?)
+            })
+            .unwrap();
+        assert!(cleared.is_none());
+        assert!(repo
+            .edit(
+                "u",
+                TransactionEdit {
+                    merchant_override: None,
+                    category_id: Some("nope".into()),
+                    is_reviewed: true
+                }
+            )
+            .is_err());
+        assert!(matches!(
+            repo.edit(
+                "missing",
+                TransactionEdit {
+                    merchant_override: None,
+                    category_id: None,
+                    is_reviewed: true
+                }
+            ),
+            Err(DbError::NotFound)
+        ));
     }
 
     #[test]
