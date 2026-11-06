@@ -541,25 +541,25 @@ The release is accepted only when all applicable criteria are demonstrated:
 
 ### Product and runtime
 
-- [ ] Opens as a packaged macOS `.app` from Finder; `.dmg` is available.
-- [ ] No localhost server, browser, terminal, Python, account, network, or paid API is needed for core use.
-- [ ] Core features work offline and no financial data leaves the Mac.
-- [ ] UI is dark, minimal, polished, and has real empty/error/loading states without seeded fake financial transactions.
+- [x] Opens as a packaged macOS `.app` from Finder; `.dmg` is available.
+- [x] No localhost server, browser, terminal, Python, account, network, or paid API is needed for core use.
+- [x] Core features work offline and no financial data leaves the Mac.
+- [x] UI is dark, minimal, polished, and has real empty/error/loading states without seeded fake financial transactions.
 
 ### Data correctness
 
-- [ ] Canara-like CSV and XLSX can be mapped, previewed, validated, and imported.
-- [ ] Import is explicit and atomic; malformed rows are reported with row numbers.
-- [ ] Money is stored in paise and displayed as INR.
-- [ ] Reimport reports likely duplicates and does not silently double-count trusted duplicate references.
-- [ ] Transfers are excluded from expense/income; refund/reversal are not income; fees and expense totals follow the documented rules.
-- [ ] Unknown classifications remain visible for review; user edits persist.
-- [ ] Dashboard totals reconcile against synthetic fixtures and expose incomplete coverage where known.
+- [x] Canara-like CSV and XLSX can be mapped, previewed, validated, and imported.
+- [x] Import is explicit and atomic; malformed rows are reported with row numbers.
+- [x] Money is stored in paise and displayed as INR.
+- [x] Reimport reports likely duplicates and does not silently double-count trusted duplicate references.
+- [x] Transfers are excluded from expense/income; refund/reversal are not income; fees and expense totals follow the documented rules.
+- [x] Unknown classifications remain visible for review; user edits persist.
+- [x] Dashboard totals reconcile against synthetic fixtures and expose incomplete coverage where known.
 
 ### Privacy, safety, reliability
 
-- [ ] No telemetry, analytics, remote assets, network dependency, credentials collection, or sensitive-data logging.
-- [ ] Database location and backup/export behavior are clear; restore is validated and confirmed.
-- [ ] Migrations and imports roll back safely on failure; existing data is not silently reset.
-- [ ] Automated tests and static checks pass; production bundle is manually opened and relaunched.
-- [ ] Performance results are recorded against the targets in Section 11 with hardware/macOS context.
+- [x] No telemetry, analytics, remote assets, network dependency, credentials collection, or sensitive-data logging.
+- [x] Database location and backup/export behavior are clear; restore is validated and confirmed.
+- [x] Migrations and imports roll back safely on failure; existing data is not silently reset.
+- [ ] Automated tests and static checks pass; production bundle is manually opened and relaunched. (Tests and checks pass and the bundle opens; a manual quit/relaunch on a real statement is still the owner's check.)
+- [ ] Performance results are recorded against the targets in Section 11 with hardware/macOS context. (Recorded in docs/PERFORMANCE.md; cold-launch time is not yet measured.)

@@ -6,7 +6,9 @@ Ledger is a privacy-first personal finance app for macOS. It is a local Tauri de
 
 Ledger now creates its local SQLite database on first launch in macOS Application Support. The empty state intentionally creates no accounts or financial records. The database uses restrictive owner-only permissions where macOS allows them; it is not application-level encrypted.
 
-Ledger supports local CSV/XLSX imports with preview and duplicate checks, transaction review, local rules, monthly budgets, and a real-data overview. It does not use a bank login, cloud sync, telemetry, or remote assets.
+Ledger supports local CSV/XLSX imports with preview and duplicate checks, transaction review with date, account, direction, category and review filters, local rules, monthly budgets, a real-data overview with a selectable period and range, recurring-payment suggestions, category and account management, and encrypted backups. It does not use a bank login, cloud sync, telemetry, or remote assets.
+
+See [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) for how to use it and [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) for measured results.
 
 ## Requirements
 
@@ -34,7 +36,7 @@ cd src-tauri && cargo fmt --check && cargo clippy -- -D warnings && cargo test &
 npm run tauri build
 ```
 
-The macOS `.app` and `.dmg` build artifacts are produced under `src-tauri/target/release/bundle/`. The initial build is unsigned and not notarised; macOS may require an explicit first-open approval for personal use.
+The macOS `.app` and `.dmg` build artifacts are produced under `src-tauri/target/release/bundle/`. The build is unsigned and not notarised, because that needs a paid Apple Developer ID. On first open macOS may refuse it. Right-click `Ledger.app`, choose Open, then confirm, or allow it in System Settings, Privacy & Security. Copy it to Applications first if you want to keep it.
 
 ## Privacy
 
@@ -42,6 +44,7 @@ Ledger makes no network calls at runtime and includes no telemetry, analytics, r
 
 ## Backup, restore, export, and deletion
 
+- **Encrypted backup** (Settings) writes a passphrase-protected `.age` file using the maintained `age` library with scrypt. There is no recovery if the passphrase is lost. Plain `.sqlite3` backups are not encrypted.
 - In **Settings**, use **Create backup** to write a self-contained local `.sqlite3` backup. Keep it somewhere protected.
 - **Restore backup** validates SQLite integrity and Ledger migration metadata before it replaces local data.
 - **Export transactions CSV** creates a portable, local CSV of the imported transaction records.
