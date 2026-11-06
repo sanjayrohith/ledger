@@ -5,8 +5,12 @@ use crate::{
         repositories::{
             Account, AccountDraft, AccountRepository, BudgetDraft, BudgetRepository, BudgetStatus,
             Category, CategoryRepository, MerchantRule, MerchantRuleDraft, MerchantRuleUpdate,
-            OverviewRepository, OverviewSummary, RuleRepository, TransactionEdit, TransactionPage,
-            TransactionQuery, TransactionRepository,
+            OverviewRepository, OverviewSummary, RuleRepository, SummaryOptions, TransactionEdit,
+            TransactionPage, TransactionQuery, TransactionRepository,
+        },
+        settings::{
+            AppSettings, CategoryAdminRepository, CategoryDraft, CategoryRow, RecurringRepository,
+            RecurringSuggestion, SettingsRepository,
         },
         Database,
     },
@@ -105,10 +109,11 @@ pub fn edit_transaction(
 #[tauri::command]
 pub fn overview_summary(
     today: String,
+    options: Option<SummaryOptions>,
     database: State<'_, Database>,
 ) -> Result<OverviewSummary, String> {
     OverviewRepository::new(&database)
-        .summary(&today)
+        .summary_with(&today, options.unwrap_or_default())
         .map_err(|error| error.to_string())
 }
 
@@ -182,5 +187,102 @@ pub fn restore_database(path: String, database: State<'_, Database>) -> Result<(
 pub fn clear_personal_data(database: State<'_, Database>) -> Result<(), String> {
     database
         .clear_personal_data()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn rename_account(
+    id: String,
+    name: String,
+    database: State<'_, Database>,
+) -> Result<(), String> {
+    AccountRepository::new(&database)
+        .rename(&id, name)
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
+pub fn archive_account(id: String, database: State<'_, Database>) -> Result<(), String> {
+    AccountRepository::new(&database)
+        .archive(&id)
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
+pub fn list_categories(database: State<'_, Database>) -> Result<Vec<CategoryRow>, String> {
+    CategoryAdminRepository::new(&database)
+        .list_all()
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
+pub fn create_category(
+    draft: CategoryDraft,
+    database: State<'_, Database>,
+) -> Result<CategoryRow, String> {
+    CategoryAdminRepository::new(&database)
+        .create(draft)
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
+pub fn rename_category(
+    id: String,
+    name: String,
+    database: State<'_, Database>,
+) -> Result<(), String> {
+    CategoryAdminRepository::new(&database)
+        .rename(&id, name)
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
+pub fn archive_category(id: String, database: State<'_, Database>) -> Result<(), String> {
+    CategoryAdminRepository::new(&database)
+        .archive(&id)
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
+pub fn get_settings(database: State<'_, Database>) -> Result<AppSettings, String> {
+    SettingsRepository::new(&database)
+        .load()
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
+pub fn set_first_day_of_month(day: u8, database: State<'_, Database>) -> Result<(), String> {
+    SettingsRepository::new(&database)
+        .set_first_day_of_month(day)
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
+pub fn recurring_suggestions(
+    database: State<'_, Database>,
+) -> Result<Vec<RecurringSuggestion>, String> {
+    RecurringRepository::new(&database)
+        .suggestions()
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
+pub fn dismiss_recurring(
+    merchant_key: String,
+    database: State<'_, Database>,
+) -> Result<(), String> {
+    RecurringRepository::new(&database)
+        .dismiss(&merchant_key)
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
+pub fn backup_database_encrypted(
+    path: String,
+    passphrase: String,
+    database: State<'_, Database>,
+) -> Result<(), String> {
+    database
+        .backup_encrypted_to(path, &passphrase)
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
+pub fn restore_database_encrypted(
+    path: String,
+    passphrase: String,
+    database: State<'_, Database>,
+) -> Result<(), String> {
+    database
+        .restore_encrypted_from(path, &passphrase)
         .map_err(|error| error.to_string())
 }

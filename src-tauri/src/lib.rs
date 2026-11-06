@@ -37,6 +37,18 @@ pub fn run() {
             commands::backup_database,
             commands::restore_database,
             commands::clear_personal_data,
+            commands::rename_account,
+            commands::archive_account,
+            commands::list_categories,
+            commands::create_category,
+            commands::rename_category,
+            commands::archive_category,
+            commands::get_settings,
+            commands::set_first_day_of_month,
+            commands::recurring_suggestions,
+            commands::dismiss_recurring,
+            commands::backup_database_encrypted,
+            commands::restore_database_encrypted,
         ])
         .run(tauri::generate_context!())
         .expect("Ledger failed to start");

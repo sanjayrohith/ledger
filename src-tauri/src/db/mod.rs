@@ -1,5 +1,7 @@
+pub mod encrypted_backup;
 pub mod migrations;
 pub mod repositories;
+pub mod settings;
 
 use std::{
     fmt, fs,
@@ -12,6 +14,7 @@ use tauri::{AppHandle, Manager};
 
 pub struct Database {
     connection: Mutex<Connection>,
+    path: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -97,7 +100,12 @@ impl Database {
 
         Ok(Self {
             connection: Mutex::new(connection),
+            path: Some(path.to_path_buf()),
         })
+    }
+
+    pub fn database_path(&self) -> Option<&Path> {
+        self.path.as_deref()
     }
 
     pub fn open_in_memory() -> Result<Self, DbError> {
@@ -106,6 +114,7 @@ impl Database {
         migrations::apply(&mut connection)?;
         Ok(Self {
             connection: Mutex::new(connection),
+            path: None,
         })
     }
 

@@ -292,15 +292,24 @@ pub struct TransactionListItem {
     pub category_id: Option<String>,
     pub transaction_kind: String,
     pub is_reviewed: bool,
+    pub account_name: String,
+    pub category_name: Option<String>,
+    pub source_filename: Option<String>,
+    pub imported_at: Option<String>,
+    pub source_row_number: Option<i64>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransactionQuery {
     pub account_id: Option<String>,
     pub search: Option<String>,
     pub direction: Option<String>,
     pub category_id: Option<String>,
+    #[serde(default)]
+    pub date_from: Option<String>,
+    #[serde(default)]
+    pub date_to: Option<String>,
     pub review_only: bool,
     pub limit: usize,
     pub offset: usize,
@@ -339,6 +348,18 @@ pub struct OverviewSummary {
     pub trend: Vec<(String, i64)>,
     pub merchants: Vec<(String, i64)>,
     pub budget_alerts: Vec<(String, i64, i64)>,
+    pub period_label: String,
+    pub range_months: u8,
+    pub first_day_of_month: u8,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SummaryOptions {
+    /// Period label as `YYYY-MM`. Defaults to the period containing today.
+    pub month: Option<String>,
+    /// Trailing periods (1 to 24) used for categories, merchants and the trend length.
+    pub range_months: Option<u8>,
 }
 
 pub struct OverviewRepository<'database> {
@@ -349,52 +370,126 @@ impl<'database> OverviewRepository<'database> {
         Self { database }
     }
     pub fn summary(&self, today: &str) -> Result<OverviewSummary, DbError> {
-        let month = &today[..7];
-        let (year, month_num) = (
-            month[..4].parse::<i32>().unwrap_or(2000),
-            month[5..7].parse::<u8>().unwrap_or(1),
-        );
-        let first = time::Date::from_calendar_date(
-            year,
-            time::Month::try_from(month_num).unwrap_or(time::Month::January),
-            1,
-        )
-        .map_err(|e| DbError::Validation(e.to_string()))?;
-        let start = first.to_string();
-        let (pm_year, pm_month) = if month_num == 1 {
-            (year - 1, 12)
-        } else {
-            (year, month_num - 1)
+        self.summary_with(today, SummaryOptions::default())
+    }
+
+    pub fn summary_with(
+        &self,
+        today: &str,
+        options: SummaryOptions,
+    ) -> Result<OverviewSummary, DbError> {
+        use crate::db::settings::SettingsRepository;
+        let first_day = SettingsRepository::new(self.database).first_day_of_month()?;
+        let today_date =
+            time::Date::parse(today, &time::format_description::well_known::Iso8601::DATE)
+                .map_err(|e| DbError::Validation(format!("invalid date: {e}")))?;
+        let (year, month_num) = match options.month.as_deref().filter(|m| !m.is_empty()) {
+            Some(label) => parse_label(label)?,
+            None => {
+                let current = (today_date.year(), u8::from(today_date.month()));
+                if today_date.day() < first_day {
+                    shift_month(current, -1)
+                } else {
+                    current
+                }
+            }
         };
-        let prev_start =
-            time::Date::from_calendar_date(pm_year, time::Month::try_from(pm_month).unwrap(), 1)
-                .unwrap()
-                .to_string();
-        let next_start = if month_num == 12 {
-            time::Date::from_calendar_date(year + 1, time::Month::January, 1)
+        let label = format!("{year:04}-{month_num:02}");
+        let range = options.range_months.unwrap_or(1).clamp(1, 24);
+        let trend_months = range.max(6);
+        let boundary = |delta: i32| -> Result<String, DbError> {
+            let (y, m) = shift_month((year, month_num), delta);
+            time::Date::from_calendar_date(
+                y,
+                time::Month::try_from(m).map_err(|e| DbError::Validation(e.to_string()))?,
+                first_day,
+            )
+            .map(|d| d.to_string())
+            .map_err(|e| DbError::Validation(e.to_string()))
+        };
+        let start = boundary(0)?;
+        let next_start = boundary(1)?;
+        let prev_start = boundary(-1)?;
+        let range_start = boundary(-(i32::from(range) - 1))?;
+        let trend_start = boundary(-(i32::from(trend_months) - 1))?;
+        let period_end = if today >= start.as_str() && today < next_start.as_str() {
+            today.to_owned()
         } else {
-            time::Date::from_calendar_date(year, time::Month::try_from(month_num + 1).unwrap(), 1)
-        }
-        .unwrap()
-        .to_string();
+            time::Date::parse(
+                &next_start,
+                &time::format_description::well_known::Iso8601::DATE,
+            )
+            .ok()
+            .and_then(|d| d.previous_day())
+            .map(|d| d.to_string())
+            .unwrap_or_else(|| today.to_owned())
+        };
+        let shift_days = i64::from(first_day) - 1;
         self.database.with_connection(|connection| {
-            let totals = |from: &str, to: &str| -> Result<(i64,i64), DbError> { Ok(connection.query_row("SELECT COALESCE(SUM(CASE WHEN direction='credit' AND transaction_kind='income' THEN amount_paise ELSE 0 END),0), COALESCE(SUM(CASE WHEN direction='debit' AND transaction_kind IN ('expense','fee') THEN amount_paise ELSE 0 END),0) FROM transactions WHERE transaction_date >= ?1 AND transaction_date < ?2", params![from,to], |r| Ok((r.get(0)?,r.get(1)?)))?) };
-            let (income, expense) = totals(&start, &next_start)?; let (prev_income, prev_expense) = totals(&prev_start, &start)?;
+            let totals = |from: &str, to: &str| -> Result<(i64, i64), DbError> {
+                Ok(connection.query_row(
+                    "SELECT COALESCE(SUM(CASE WHEN direction='credit' AND transaction_kind='income' THEN amount_paise ELSE 0 END),0),
+                            COALESCE(SUM(CASE WHEN direction='debit' AND transaction_kind IN ('expense','fee') THEN amount_paise ELSE 0 END),0)
+                     FROM transactions WHERE transaction_date >= ?1 AND transaction_date < ?2",
+                    params![from, to],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )?)
+            };
+            let (income, expense) = totals(&start, &next_start)?;
+            let (prev_income, prev_expense) = totals(&prev_start, &start)?;
             let unreviewed = connection.query_row("SELECT COUNT(*) FROM transactions WHERE is_reviewed=0", [], |r| r.get(0))?;
             let last = connection.query_row("SELECT MAX(imported_at) FROM import_batches WHERE status='committed'", [], |r| r.get(0))?;
-            let coverage = connection.query_row("SELECT MIN(period_start),MAX(period_end) FROM import_batches WHERE status='committed'", [], |r| Ok((r.get::<_,Option<String>>(0)?,r.get::<_,Option<String>>(1)?)))?;
+            let coverage = connection.query_row(
+                "SELECT MIN(period_start),MAX(period_end) FROM import_batches WHERE status='committed'",
+                [],
+                |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?)),
+            )?;
             let mut stmt = connection.prepare("SELECT COALESCE(c.name,'Uncategorised'),SUM(t.amount_paise) FROM transactions t LEFT JOIN categories c ON c.id=t.category_id WHERE t.transaction_date >= ?1 AND t.transaction_date < ?2 AND t.direction='debit' AND t.transaction_kind IN ('expense','fee') GROUP BY COALESCE(c.name,'Uncategorised') ORDER BY SUM(t.amount_paise) DESC")?;
-            let categories = stmt.query_map(params![start,next_start], |r| Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<Vec<_>,_>>()?;
-            let six_month_start = if month_num <= 5 { time::Date::from_calendar_date(year - 1, time::Month::try_from(month_num + 7).unwrap(), 1).unwrap() } else { time::Date::from_calendar_date(year, time::Month::try_from(month_num - 5).unwrap(), 1).unwrap() }.to_string();
-            let mut trend_stmt = connection.prepare("SELECT substr(transaction_date,1,7),SUM(amount_paise) FROM transactions WHERE transaction_date>=?1 AND transaction_date<?2 AND direction='debit' AND transaction_kind IN ('expense','fee') GROUP BY substr(transaction_date,1,7) ORDER BY 1")?;
-            let trend = trend_stmt.query_map(params![six_month_start,next_start], |r| Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<Vec<_>,_>>()?;
+            let categories = stmt.query_map(params![range_start, next_start], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<Vec<_>, _>>()?;
+            let mut trend_stmt = connection.prepare(&format!("SELECT substr(date(transaction_date,'-{shift_days} days'),1,7),SUM(amount_paise) FROM transactions WHERE transaction_date>=?1 AND transaction_date<?2 AND direction='debit' AND transaction_kind IN ('expense','fee') GROUP BY 1 ORDER BY 1"))?;
+            let trend = trend_stmt.query_map(params![trend_start, next_start], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<Vec<_>, _>>()?;
             let mut merchant_stmt = connection.prepare("SELECT COALESCE(NULLIF(merchant_override,''),raw_description),SUM(amount_paise) FROM transactions WHERE transaction_date>=?1 AND transaction_date<?2 AND direction='debit' AND transaction_kind IN ('expense','fee') GROUP BY COALESCE(NULLIF(merchant_override,''),raw_description) ORDER BY SUM(amount_paise) DESC LIMIT 5")?;
-            let merchants = merchant_stmt.query_map(params![start,next_start], |r| Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<Vec<_>,_>>()?;
+            let merchants = merchant_stmt.query_map(params![range_start, next_start], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<Vec<_>, _>>()?;
             let mut alerts_stmt = connection.prepare("SELECT c.name,b.amount_paise,COALESCE(SUM(CASE WHEN t.direction='debit' AND t.transaction_kind IN ('expense','fee') THEN t.amount_paise ELSE 0 END),0) FROM budgets b JOIN categories c ON c.id=b.category_id LEFT JOIN transactions t ON t.category_id=c.id AND t.transaction_date>=?1 AND t.transaction_date<?2 WHERE b.month=?3 GROUP BY c.name,b.amount_paise HAVING COALESCE(SUM(CASE WHEN t.direction='debit' AND t.transaction_kind IN ('expense','fee') THEN t.amount_paise ELSE 0 END),0)>b.amount_paise ORDER BY 3-b.amount_paise DESC")?;
-            let budget_alerts = alerts_stmt.query_map(params![start,next_start,month], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?.collect::<Result<Vec<_>,_>>()?;
-            Ok(OverviewSummary { period_start:start, period_end:today.to_owned(), income_paise:income, expense_paise:expense, net_cash_paise:income-expense, previous_income_paise:prev_income, previous_expense_paise:prev_expense, unreviewed_count:unreviewed, last_imported_at:last, coverage_start:coverage.0, coverage_end:coverage.1, categories, trend, merchants, budget_alerts })
+            let budget_alerts = alerts_stmt.query_map(params![start, next_start, label], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<Result<Vec<_>, _>>()?;
+            Ok(OverviewSummary {
+                period_start: start,
+                period_end,
+                income_paise: income,
+                expense_paise: expense,
+                net_cash_paise: income - expense,
+                previous_income_paise: prev_income,
+                previous_expense_paise: prev_expense,
+                unreviewed_count: unreviewed,
+                last_imported_at: last,
+                coverage_start: coverage.0,
+                coverage_end: coverage.1,
+                categories,
+                trend,
+                merchants,
+                budget_alerts,
+                period_label: label.clone(),
+                range_months: range,
+                first_day_of_month: first_day,
+            })
         })
     }
+}
+
+fn parse_label(label: &str) -> Result<(i32, u8), DbError> {
+    let invalid = || DbError::Validation("month must look like 2026-03".into());
+    let (year, month) = label.split_once('-').ok_or_else(invalid)?;
+    let year: i32 = year.parse().map_err(|_| invalid())?;
+    let month: u8 = month.parse().map_err(|_| invalid())?;
+    if !(1..=12).contains(&month) || !(1900..=2200).contains(&year) {
+        return Err(invalid());
+    }
+    Ok((year, month))
+}
+
+fn shift_month((year, month): (i32, u8), delta: i32) -> (i32, u8) {
+    let index = year * 12 + i32::from(month) - 1 + delta;
+    (index.div_euclid(12), (index.rem_euclid(12) + 1) as u8)
 }
 
 pub struct TransactionRepository<'database> {
@@ -407,18 +502,80 @@ impl<'database> TransactionRepository<'database> {
     }
     pub fn page(&self, query: TransactionQuery) -> Result<TransactionPage, DbError> {
         self.database.with_connection(|connection| {
-            let mut where_sql = Vec::new(); let mut values = Vec::<rusqlite::types::Value>::new();
-            if let Some(account_id) = query.account_id.filter(|v| !v.is_empty()) { where_sql.push("account_id = ?".to_owned()); values.push(account_id.into()); }
-            if let Some(search) = query.search.filter(|v| !v.trim().is_empty()) { where_sql.push("(raw_description LIKE ? OR merchant_override LIKE ?)".to_owned()); let like = format!("%{}%", search.trim()); values.push(like.clone().into()); values.push(like.into()); }
-            if let Some(direction) = query.direction.filter(|v| !v.is_empty()) { where_sql.push("direction = ?".to_owned()); values.push(direction.into()); }
-            if let Some(category_id) = query.category_id.filter(|v| !v.is_empty()) { where_sql.push("category_id = ?".to_owned()); values.push(category_id.into()); }
-            if query.review_only { where_sql.push("is_reviewed = 0".to_owned()); }
-            let clause = if where_sql.is_empty() { String::new() } else { format!(" WHERE {}", where_sql.join(" AND ")) };
-            let total: i64 = connection.query_row(&format!("SELECT COUNT(*) FROM transactions{clause}"), rusqlite::params_from_iter(values.iter()), |row| row.get(0))?;
-            values.push((query.limit.clamp(1, 200) as i64).into()); values.push((query.offset as i64).into());
-            let sql = format!("SELECT id, transaction_date, direction, amount_paise, raw_description, merchant_override, category_id, transaction_kind, is_reviewed FROM transactions{clause} ORDER BY transaction_date DESC, created_at DESC LIMIT ? OFFSET ?");
+            let mut where_sql = Vec::new();
+            let mut values = Vec::<rusqlite::types::Value>::new();
+            if let Some(account_id) = query.account_id.filter(|v| !v.is_empty()) {
+                where_sql.push("t.account_id = ?".to_owned());
+                values.push(account_id.into());
+            }
+            if let Some(search) = query.search.filter(|v| !v.trim().is_empty()) {
+                where_sql.push("(t.raw_description LIKE ? OR t.merchant_override LIKE ?)".to_owned());
+                let like = format!("%{}%", search.trim());
+                values.push(like.clone().into());
+                values.push(like.into());
+            }
+            if let Some(direction) = query.direction.filter(|v| !v.is_empty()) {
+                where_sql.push("t.direction = ?".to_owned());
+                values.push(direction.into());
+            }
+            if let Some(category_id) = query.category_id.filter(|v| !v.is_empty()) {
+                where_sql.push("t.category_id = ?".to_owned());
+                values.push(category_id.into());
+            }
+            if let Some(from) = query.date_from.filter(|v| !v.is_empty()) {
+                where_sql.push("t.transaction_date >= ?".to_owned());
+                values.push(from.into());
+            }
+            if let Some(to) = query.date_to.filter(|v| !v.is_empty()) {
+                where_sql.push("t.transaction_date <= ?".to_owned());
+                values.push(to.into());
+            }
+            if query.review_only {
+                where_sql.push("t.is_reviewed = 0".to_owned());
+            }
+            let clause = if where_sql.is_empty() {
+                String::new()
+            } else {
+                format!(" WHERE {}", where_sql.join(" AND "))
+            };
+            let total: i64 = connection.query_row(
+                &format!("SELECT COUNT(*) FROM transactions t{clause}"),
+                rusqlite::params_from_iter(values.iter()),
+                |row| row.get(0),
+            )?;
+            values.push((query.limit.clamp(1, 200) as i64).into());
+            values.push((query.offset as i64).into());
+            let sql = format!(
+                "SELECT t.id, t.transaction_date, t.direction, t.amount_paise, t.raw_description, t.merchant_override,
+                        t.category_id, t.transaction_kind, t.is_reviewed, a.name, c.name,
+                        b.original_filename, b.imported_at, t.source_row_number
+                 FROM transactions t
+                 JOIN accounts a ON a.id = t.account_id
+                 LEFT JOIN categories c ON c.id = t.category_id
+                 LEFT JOIN import_batches b ON b.id = t.import_batch_id{clause}
+                 ORDER BY t.transaction_date DESC, t.created_at DESC, t.id LIMIT ? OFFSET ?"
+            );
             let mut statement = connection.prepare(&sql)?;
-            let items = statement.query_map(rusqlite::params_from_iter(values.iter()), |row| Ok(TransactionListItem { id: row.get(0)?, transaction_date: row.get(1)?, direction: row.get(2)?, amount_paise: row.get(3)?, raw_description: row.get(4)?, merchant_override: row.get(5)?, category_id: row.get(6)?, transaction_kind: row.get(7)?, is_reviewed: row.get::<_, i64>(8)? == 1 }))?.collect::<Result<Vec<_>, _>>()?;
+            let items = statement
+                .query_map(rusqlite::params_from_iter(values.iter()), |row| {
+                    Ok(TransactionListItem {
+                        id: row.get(0)?,
+                        transaction_date: row.get(1)?,
+                        direction: row.get(2)?,
+                        amount_paise: row.get(3)?,
+                        raw_description: row.get(4)?,
+                        merchant_override: row.get(5)?,
+                        category_id: row.get(6)?,
+                        transaction_kind: row.get(7)?,
+                        is_reviewed: row.get::<_, i64>(8)? == 1,
+                        account_name: row.get(9)?,
+                        category_name: row.get(10)?,
+                        source_filename: row.get(11)?,
+                        imported_at: row.get(12)?,
+                        source_row_number: row.get(13)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
             Ok(TransactionPage { items, total: total as usize })
         })
     }
@@ -636,6 +793,7 @@ mod tests {
                 review_only: true,
                 limit: 1,
                 offset: 0,
+                ..Default::default()
             })
             .unwrap();
         assert_eq!(page.total, 1);
@@ -659,6 +817,7 @@ mod tests {
                 review_only: false,
                 limit: 10,
                 offset: 0,
+                ..Default::default()
             })
             .unwrap();
         assert_eq!(edited.total, 1);
@@ -708,6 +867,7 @@ mod tests {
                 review_only: false,
                 limit: 50,
                 offset: 0,
+                ..Default::default()
             })
             .unwrap();
         let elapsed = started.elapsed();
@@ -885,5 +1045,118 @@ mod tests {
             (changed.name, changed.priority, changed.is_enabled),
             ("Edited".into(), 5, false)
         );
+    }
+
+    fn seed_tx(database: &Database, rows: &[(&str, &str, &str, i64, &str)]) {
+        database.with_connection(|connection| {
+            connection.execute("INSERT OR IGNORE INTO accounts (id,name,institution,created_at,updated_at) VALUES ('acc','Daily','Canara Bank','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')", [])?;
+            connection.execute("INSERT OR IGNORE INTO import_batches (id,account_id,source_type,original_filename,imported_at,status) VALUES ('bat','acc','canara_csv','march.csv','2026-04-01T00:00:00Z','committed')", [])?;
+            for (id, date, direction, amount, kind) in rows {
+                connection.execute("INSERT INTO transactions (id,account_id,import_batch_id,transaction_date,direction,amount_paise,raw_description,normalized_description,transaction_kind,category_id,is_reviewed,source_row_number,fingerprint,created_at,updated_at) VALUES (?1,'acc','bat',?2,?3,?4,'Shop','shop',?5,'00000000-0000-4000-8000-000000000001',0,7,?1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')", params![id, date, direction, amount, kind])?;
+            }
+            Ok(())
+        }).unwrap();
+    }
+
+    #[test]
+    fn transaction_page_filters_by_date_and_exposes_account_category_and_source() {
+        let database = Database::open_in_memory().unwrap();
+        seed_tx(
+            &database,
+            &[
+                ("a", "2026-03-01", "debit", 100, "expense"),
+                ("b", "2026-03-15", "debit", 200, "expense"),
+                ("c", "2026-04-01", "debit", 300, "expense"),
+            ],
+        );
+        let page = TransactionRepository::new(&database)
+            .page(TransactionQuery {
+                date_from: Some("2026-03-10".into()),
+                date_to: Some("2026-03-31".into()),
+                limit: 10,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(page.total, 1);
+        let item = &page.items[0];
+        assert_eq!(item.id, "b");
+        assert_eq!(item.account_name, "Daily");
+        assert_eq!(item.category_name.as_deref(), Some("Groceries"));
+        assert_eq!(item.source_filename.as_deref(), Some("march.csv"));
+        assert_eq!(item.source_row_number, Some(7));
+    }
+
+    #[test]
+    fn overview_can_select_past_months_ranges_and_custom_first_day() {
+        use super::SummaryOptions;
+        use crate::db::settings::SettingsRepository;
+        let database = Database::open_in_memory().unwrap();
+        seed_tx(
+            &database,
+            &[
+                ("jan", "2026-01-20", "debit", 1000, "expense"),
+                ("feb", "2026-02-20", "debit", 2000, "expense"),
+                ("mar", "2026-03-20", "debit", 4000, "expense"),
+                ("edge", "2026-03-04", "debit", 8000, "expense"),
+            ],
+        );
+        let overview = OverviewRepository::new(&database);
+        let february = overview
+            .summary_with(
+                "2026-03-25",
+                SummaryOptions {
+                    month: Some("2026-02".into()),
+                    range_months: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(february.expense_paise, 2000);
+        assert_eq!(february.period_label, "2026-02");
+        assert_eq!(february.period_end, "2026-02-28");
+        let wide = overview
+            .summary_with(
+                "2026-03-25",
+                SummaryOptions {
+                    month: None,
+                    range_months: Some(3),
+                },
+            )
+            .unwrap();
+        assert_eq!(wide.categories, vec![("Groceries".to_owned(), 15000)]);
+        let twelve = overview
+            .summary_with(
+                "2026-03-25",
+                SummaryOptions {
+                    month: None,
+                    range_months: Some(12),
+                },
+            )
+            .unwrap();
+        assert_eq!(twelve.trend.len(), 3);
+        assert!(overview
+            .summary_with(
+                "2026-03-25",
+                SummaryOptions {
+                    month: Some("2026-13".into()),
+                    range_months: None
+                }
+            )
+            .is_err());
+
+        SettingsRepository::new(&database)
+            .set_first_day_of_month(5)
+            .unwrap();
+        let shifted = overview.summary("2026-03-25").unwrap();
+        assert_eq!(shifted.period_label, "2026-03");
+        assert_eq!(shifted.period_start, "2026-03-05");
+        assert_eq!(shifted.expense_paise, 4000);
+        let before_first_day = overview.summary("2026-03-04").unwrap();
+        assert_eq!(before_first_day.period_label, "2026-02");
+        // Feb 5 to Mar 4 includes the Feb 20 and Mar 4 transactions.
+        assert_eq!(before_first_day.expense_paise, 2000 + 8000);
+        assert!(before_first_day
+            .trend
+            .iter()
+            .any(|(label, amount)| label == "2026-02" && *amount == 2000 + 8000));
     }
 }

@@ -21,6 +21,10 @@ const MIGRATIONS: &[Migration] = &[
         version: 3,
         sql: include_str!("../../migrations/0003_rules_and_budgets.sql"),
     },
+    Migration {
+        version: 4,
+        sql: include_str!("../../migrations/0004_settings_and_recurring.sql"),
+    },
 ];
 
 const DEFAULT_CATEGORIES: &[(&str, &str, &str, i64)] = &[
@@ -163,7 +167,7 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM categories", [], |row| row.get(0))
             .expect("category rows query");
 
-        assert_eq!(version_count, 3);
+        assert_eq!(version_count, 4);
         assert_eq!(category_count, 12);
     }
 
