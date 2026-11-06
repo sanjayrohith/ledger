@@ -349,6 +349,7 @@ pub struct OverviewSummary {
     pub merchants: Vec<(String, i64)>,
     pub budget_alerts: Vec<(String, i64, i64)>,
     pub accounts: Vec<(String, i64, i64)>,
+    pub months: Vec<(String, i64, i64)>,
     pub daily: Vec<(String, i64)>,
     pub weekdays: Vec<(u8, i64)>,
     pub uncategorised_paise: i64,
@@ -387,7 +388,11 @@ impl<'database> OverviewRepository<'database> {
         let today_date =
             time::Date::parse(today, &time::format_description::well_known::Iso8601::DATE)
                 .map_err(|e| DbError::Validation(format!("invalid date: {e}")))?;
-        let (year, month_num) = match options.month.as_deref().filter(|m| !m.is_empty()) {
+        let (year, month_num) = match options
+            .month
+            .as_deref()
+            .filter(|m| !m.is_empty() && *m != "all")
+        {
             Some(label) => parse_label(label)?,
             None => {
                 let period_of = |date: time::Date| {
@@ -417,8 +422,50 @@ impl<'database> OverviewRepository<'database> {
                     .unwrap_or(today_period)
             }
         };
-        let label = format!("{year:04}-{month_num:02}");
-        let range = options.range_months.unwrap_or(1).clamp(1, 24);
+        let all_time = options.month.as_deref() == Some("all");
+        let mut label = format!("{year:04}-{month_num:02}");
+        let mut range = options.range_months.unwrap_or(1).clamp(1, 24);
+        let (year, month_num) = if all_time {
+            // Anchor on the latest period that has data and reach back to the earliest.
+            let bounds = self.database.with_connection(|connection| {
+                Ok(connection.query_row(
+                    "SELECT MIN(transaction_date),MAX(transaction_date) FROM transactions",
+                    [],
+                    |r| {
+                        Ok((
+                            r.get::<_, Option<String>>(0)?,
+                            r.get::<_, Option<String>>(1)?,
+                        ))
+                    },
+                )?)
+            })?;
+            let parse = |d: &Option<String>| {
+                d.as_deref().and_then(|d| {
+                    time::Date::parse(d, &time::format_description::well_known::Iso8601::DATE).ok()
+                })
+            };
+            let period_of = |date: time::Date| {
+                let current = (date.year(), u8::from(date.month()));
+                if date.day() < first_day {
+                    shift_month(current, -1)
+                } else {
+                    current
+                }
+            };
+            match (parse(&bounds.0), parse(&bounds.1)) {
+                (Some(first), Some(last)) => {
+                    let (fy, fm) = period_of(first);
+                    let (ly, lm) = period_of(last);
+                    let span = (ly - fy) * 12 + i32::from(lm) - i32::from(fm) + 1;
+                    range = u8::try_from(span.clamp(1, 120)).unwrap_or(120);
+                    label = "all".to_owned();
+                    (ly, lm)
+                }
+                _ => (year, month_num),
+            }
+        } else {
+            (year, month_num)
+        };
         let trend_months = range.max(6);
         let boundary = |delta: i32| -> Result<String, DbError> {
             let (y, m) = shift_month((year, month_num), delta);
@@ -430,10 +477,18 @@ impl<'database> OverviewRepository<'database> {
             .map(|d| d.to_string())
             .map_err(|e| DbError::Validation(e.to_string()))
         };
-        let start = boundary(0)?;
         let next_start = boundary(1)?;
-        let prev_start = boundary(-1)?;
         let range_start = boundary(-(i32::from(range) - 1))?;
+        let start = if all_time {
+            range_start.clone()
+        } else {
+            boundary(0)?
+        };
+        let prev_start = if all_time {
+            start.clone()
+        } else {
+            boundary(-1)?
+        };
         let trend_start = boundary(-(i32::from(trend_months) - 1))?;
         let period_end = if today >= start.as_str() && today < next_start.as_str() {
             today.to_owned()
@@ -482,7 +537,10 @@ impl<'database> OverviewRepository<'database> {
             let mut weekday_stmt = connection.prepare("SELECT CAST(strftime('%w',transaction_date) AS INTEGER),SUM(amount_paise) FROM transactions WHERE transaction_date>=?1 AND transaction_date<?2 AND direction='debit' AND transaction_kind IN ('expense','fee','unknown') GROUP BY 1")?;
             let weekdays = weekday_stmt.query_map(params![range_start, next_start], |r| Ok((r.get::<_, u8>(0)?, r.get(1)?)))?.collect::<Result<Vec<_>, _>>()?;
             let uncategorised = connection.query_row("SELECT COALESCE(SUM(amount_paise),0) FROM transactions WHERE transaction_date>=?1 AND transaction_date<?2 AND direction='debit' AND transaction_kind='unknown'", params![start, next_start], |r| r.get(0))?;
+            let mut months_stmt = connection.prepare(&format!("SELECT substr(date(transaction_date,'-{shift_days} days'),1,7),COALESCE(SUM(CASE WHEN direction='debit' AND transaction_kind IN ('expense','fee','unknown') THEN amount_paise ELSE 0 END),0),COALESCE(SUM(CASE WHEN direction='credit' AND transaction_kind IN ('income','unknown') THEN amount_paise ELSE 0 END),0) FROM transactions GROUP BY 1 ORDER BY 1"))?;
+            let months = months_stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<Result<Vec<_>, _>>()?;
             Ok(OverviewSummary {
+                months,
                 accounts,
                 daily,
                 weekdays,
@@ -1001,6 +1059,44 @@ mod tests {
         assert_eq!(overview.accounts.len(), 1);
         assert_eq!(overview.accounts[0].1, 7000);
         assert_eq!(overview.daily.iter().map(|d| d.1).sum::<i64>(), 7000);
+    }
+
+    #[test]
+    fn overview_all_time_spans_every_month_and_lists_them() {
+        let database = Database::open_in_memory().unwrap();
+        let account = AccountRepository::new(&database)
+            .create(AccountDraft {
+                name: "A".into(),
+                institution: None,
+                account_label: None,
+            })
+            .unwrap();
+        database.with_connection(|connection| {
+            for (id, date, amount) in [("a", "2025-12-10", 100), ("b", "2026-02-03", 250), ("c", "2026-02-20", 50)] {
+                connection.execute("INSERT INTO transactions (id,account_id,transaction_date,direction,amount_paise,raw_description,transaction_kind,is_reviewed,fingerprint,created_at,updated_at) VALUES (?1,?2,?3,'debit',?4,'Synthetic','unknown',0,?1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')", params![id, account.id, date, amount])?;
+            }
+            Ok(())
+        }).unwrap();
+        let overview = OverviewRepository::new(&database)
+            .summary_with(
+                "2026-11-06",
+                crate::db::repositories::SummaryOptions {
+                    month: Some("all".into()),
+                    range_months: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(overview.period_label, "all");
+        assert_eq!(overview.expense_paise, 400);
+        assert_eq!(overview.period_start, "2025-12-01");
+        assert_eq!(
+            overview
+                .months
+                .iter()
+                .map(|m| (m.0.as_str(), m.1))
+                .collect::<Vec<_>>(),
+            vec![("2025-12", 100), ("2026-02", 300)]
+        );
     }
 
     #[test]

@@ -84,6 +84,7 @@ const summary = {
   accounts: [["Daily account", 250000, 400000]] as [string, number, number][],
   daily: [["2026-03-05", 250000]] as [string, number][],
   weekdays: [[4, 250000]] as [number, number][],
+  months: [["2026-02", 100000, 500000], ["2026-03", 250000, 400000]] as [string, number, number][],
   uncategorisedPaise: 0
 };
 
@@ -158,33 +159,35 @@ describe("Transactions screen", () => {
 });
 
 describe("Overview screen", () => {
-  it("formats rupees, compares to the previous month and exposes an accessible chart summary", async () => {
+  it("opens on all months with a clickable month timeline and no month input", async () => {
     render(<OverviewScreen onError={vi.fn()} />);
-    expect(await screen.findByText("2026-03")).toBeInTheDocument();
-    const spent = screen.getByText("Spent").closest(".metric") as HTMLElement;
+    expect(await screen.findByRole("heading", { name: "All months" })).toBeInTheDocument();
+    expect(mocked.getOverviewSummary).toHaveBeenCalledWith(expect.any(String), { month: "all", rangeMonths: 1 });
+    expect(screen.queryByLabelText("Month")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Mar 2026: spent ₹2,500, received ₹4,000/ })).toBeInTheDocument();
+    const spent = document.querySelector(".metric") as HTMLElement;
     expect(within(spent).getByText("₹2,500.00")).toBeInTheDocument();
-    expect(screen.getByText("−₹500.00 vs previous month")).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: /2026-03: ₹2,500\.00/ })).toBeInTheDocument();
   });
 
-  it("draws the category donut, per-account bars and daily and weekday charts", async () => {
+  it("focuses one month when its column is chosen and compares with the month before", async () => {
+    const user = userEvent.setup();
     render(<OverviewScreen onError={vi.fn()} />);
-    await screen.findByText("2026-03");
+    await user.click(await screen.findByRole("button", { name: /Mar 2026: spent/ }));
+    await waitFor(() =>
+      expect(mocked.getOverviewSummary).toHaveBeenLastCalledWith(expect.any(String), { month: "2026-03", rangeMonths: 1 })
+    );
+    expect(await screen.findByText("−₹500.00 vs previous month")).toBeInTheDocument();
+    expect(screen.getByText("Day by day")).toBeInTheDocument();
+  });
+
+  it("draws the category donut, per-account bars and weekday chart", async () => {
+    render(<OverviewScreen onError={vi.fn()} />);
+    await screen.findByRole("heading", { name: "All months" });
     expect(screen.getByRole("img", { name: /Groceries: ₹2,500/ })).toBeInTheDocument();
     expect(screen.getByText("By account")).toBeInTheDocument();
     expect(screen.getByText("Daily account")).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: /Daily spending, / })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: /Thu: ₹2,500/ })).toBeInTheDocument();
-  });
-
-  it("requests a wider range and a chosen month", async () => {
-    const user = userEvent.setup();
-    render(<OverviewScreen onError={vi.fn()} />);
-    await screen.findByText("2026-03");
-    await user.selectOptions(screen.getByLabelText("Range"), "6");
-    await waitFor(() =>
-      expect(mocked.getOverviewSummary).toHaveBeenLastCalledWith(expect.any(String), { month: undefined, rangeMonths: 6 })
-    );
+    expect(screen.getByText("Every month")).toBeInTheDocument();
   });
 
   it("lets the user dismiss a recurring suggestion", async () => {

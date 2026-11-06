@@ -132,3 +132,85 @@ export function WeekdayBars({ values }: { values: [number, number][] }) {
     </div>
   );
 }
+
+const compact = (paise: number) => {
+  const rupees = paise / 100;
+  if (rupees >= 100000) return `${(rupees / 100000).toFixed(1)}L`;
+  if (rupees >= 1000) return `${Math.round(rupees / 1000)}k`;
+  return String(Math.round(rupees));
+};
+const SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+export const monthName = (label: string, long = false) => {
+  const [year, month] = label.split("-").map(Number);
+  if (!year || !month) return label;
+  return long ? `${SHORT[month - 1]} ${year}` : `${SHORT[month - 1]} ’${String(year).slice(2)}`;
+};
+
+/** One clickable column per month. Bar = money out, tick = money in. */
+export function MonthTimeline({
+  months,
+  selected,
+  onSelect
+}: {
+  months: [string, number, number][];
+  selected: string;
+  onSelect: (label: string) => void;
+}) {
+  const max = Math.max(...months.map(([, out]) => out), 1);
+  if (months.length === 0) return <p className="detail">Import a statement and its months will appear here.</p>;
+  return (
+    <div className="timeline" role="group" aria-label="Choose a month">
+      {months.map(([label, out, inn]) => (
+        <button
+          type="button"
+          key={label}
+          className={selected === label ? "month-col on" : "month-col"}
+          aria-pressed={selected === label}
+          aria-label={`${monthName(label, true)}: spent ${money(out)}, received ${money(inn)}`}
+          onClick={() => onSelect(label)}
+        >
+          <span className="month-plot">
+            <span className="month-out" style={{ height: `${Math.max(2, (out / max) * 85)}%` }}>
+              <em>{compact(out)}</em>
+            </span>
+          </span>
+          <small>{monthName(label)}</small>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function MonthTable({
+  months,
+  onSelect
+}: {
+  months: [string, number, number][];
+  onSelect: (label: string) => void;
+}) {
+  const rows = [...months].reverse();
+  return (
+    <table className="month-table">
+      <thead>
+        <tr><th>Month</th><th>Spent</th><th>Received</th><th>Net</th></tr>
+      </thead>
+      <tbody>
+        {rows.map(([label, out, inn], index) => {
+          const previous = rows[index + 1];
+          const delta = previous ? out - previous[1] : null;
+          return (
+            <tr key={label} onClick={() => onSelect(label)}>
+              <td><button type="button" className="link" onClick={() => onSelect(label)}>{monthName(label, true)}</button></td>
+              <td className="mono">
+                {money(out)}
+                {delta !== null && delta !== 0 && <small className={delta > 0 ? "up" : "down"}>{delta > 0 ? "▲" : "▼"} {money(Math.abs(delta))}</small>}
+              </td>
+              <td className="mono">{money(inn)}</td>
+              <td className="mono">{inn - out < 0 ? "−" : "+"}{money(Math.abs(inn - out))}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
