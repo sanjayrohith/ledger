@@ -38,6 +38,17 @@ npm run tauri build
 
 The macOS `.app` and `.dmg` build artifacts are produced under `src-tauri/target/release/bundle/`. The build is unsigned and not notarised, because that needs a paid Apple Developer ID. On first open macOS may refuse it. Right-click `Ledger.app`, choose Open, then confirm, or allow it in System Settings, Privacy & Security. Copy it to Applications first if you want to keep it.
 
+## Sharing a statement layout without sharing data
+
+To help build PDF import without sending a real statement anywhere, run this in Terminal (it works offline):
+
+```sh
+cd src-tauri
+cargo run --release --example pdf_layout -- "/path/to/statement.pdf"
+```
+
+It asks for the PDF password if there is one (typing is hidden), prints a layout where every digit is `9` and every letter is `X` or `x` (except generic words such as Date and Balance), checks that nothing else got through, and saves `src-tauri/pdf-layout-masked.txt`. Read that file before sharing it.
+
 ## Privacy
 
 Ledger makes no network calls at runtime and includes no telemetry, analytics, remote assets, account login, or financial records in the shell. The SQLite database is stored in macOS Application Support with owner-only permissions where supported. It is not application-level encrypted; use FileVault and a secured macOS account.

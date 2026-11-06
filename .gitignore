@@ -3,3 +3,6 @@ dist/
 src-tauri/target/
 src-tauri/gen/
 .DS_Store
+
+# Masked PDF layout reports are for sharing by hand, never committed
+pdf-layout-masked.txt
