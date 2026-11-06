@@ -80,7 +80,11 @@ const summary = {
   categories: [["Groceries", 250000]] as [string, number][],
   trend: [["2026-03", 250000]] as [string, number][],
   merchants: [["Swiggy", 250000]] as [string, number][],
-  budgetAlerts: [] as [string, number, number][]
+  budgetAlerts: [] as [string, number, number][],
+  accounts: [["Daily account", 250000, 400000]] as [string, number, number][],
+  daily: [["2026-03-05", 250000]] as [string, number][],
+  weekdays: [[4, 250000]] as [number, number][],
+  uncategorisedPaise: 0
 };
 
 beforeEach(() => {
@@ -161,6 +165,16 @@ describe("Overview screen", () => {
     expect(within(spent).getByText("₹2,500.00")).toBeInTheDocument();
     expect(screen.getByText("−₹500.00 vs previous month")).toBeInTheDocument();
     expect(screen.getByRole("img", { name: /2026-03: ₹2,500\.00/ })).toBeInTheDocument();
+  });
+
+  it("draws the category donut, per-account bars and daily and weekday charts", async () => {
+    render(<OverviewScreen onError={vi.fn()} />);
+    await screen.findByText("2026-03");
+    expect(screen.getByRole("img", { name: /Groceries: ₹2,500/ })).toBeInTheDocument();
+    expect(screen.getByText("By account")).toBeInTheDocument();
+    expect(screen.getByText("Daily account")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /Daily spending, / })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /Thu: ₹2,500/ })).toBeInTheDocument();
   });
 
   it("requests a wider range and a chosen month", async () => {

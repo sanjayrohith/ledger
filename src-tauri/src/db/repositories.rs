@@ -348,6 +348,10 @@ pub struct OverviewSummary {
     pub trend: Vec<(String, i64)>,
     pub merchants: Vec<(String, i64)>,
     pub budget_alerts: Vec<(String, i64, i64)>,
+    pub accounts: Vec<(String, i64, i64)>,
+    pub daily: Vec<(String, i64)>,
+    pub weekdays: Vec<(u8, i64)>,
+    pub uncategorised_paise: i64,
     pub period_label: String,
     pub range_months: u8,
     pub first_day_of_month: u8,
@@ -386,12 +390,31 @@ impl<'database> OverviewRepository<'database> {
         let (year, month_num) = match options.month.as_deref().filter(|m| !m.is_empty()) {
             Some(label) => parse_label(label)?,
             None => {
-                let current = (today_date.year(), u8::from(today_date.month()));
-                if today_date.day() < first_day {
-                    shift_month(current, -1)
-                } else {
-                    current
-                }
+                let period_of = |date: time::Date| {
+                    let current = (date.year(), u8::from(date.month()));
+                    if date.day() < first_day {
+                        shift_month(current, -1)
+                    } else {
+                        current
+                    }
+                };
+                let today_period = period_of(today_date);
+                // When nothing falls in the current period, show the latest period that has data.
+                let latest = self.database.with_connection(|connection| {
+                    Ok(connection.query_row(
+                        "SELECT MAX(transaction_date) FROM transactions",
+                        [],
+                        |r| r.get::<_, Option<String>>(0),
+                    )?)
+                })?;
+                latest
+                    .and_then(|d| {
+                        time::Date::parse(&d, &time::format_description::well_known::Iso8601::DATE)
+                            .ok()
+                    })
+                    .map(period_of)
+                    .filter(|latest_period| *latest_period < today_period)
+                    .unwrap_or(today_period)
             }
         };
         let label = format!("{year:04}-{month_num:02}");
@@ -428,8 +451,8 @@ impl<'database> OverviewRepository<'database> {
         self.database.with_connection(|connection| {
             let totals = |from: &str, to: &str| -> Result<(i64, i64), DbError> {
                 Ok(connection.query_row(
-                    "SELECT COALESCE(SUM(CASE WHEN direction='credit' AND transaction_kind='income' THEN amount_paise ELSE 0 END),0),
-                            COALESCE(SUM(CASE WHEN direction='debit' AND transaction_kind IN ('expense','fee') THEN amount_paise ELSE 0 END),0)
+                    "SELECT COALESCE(SUM(CASE WHEN direction='credit' AND transaction_kind IN ('income','unknown') THEN amount_paise ELSE 0 END),0),
+                            COALESCE(SUM(CASE WHEN direction='debit' AND transaction_kind IN ('expense','fee','unknown') THEN amount_paise ELSE 0 END),0)
                      FROM transactions WHERE transaction_date >= ?1 AND transaction_date < ?2",
                     params![from, to],
                     |r| Ok((r.get(0)?, r.get(1)?)),
@@ -444,15 +467,26 @@ impl<'database> OverviewRepository<'database> {
                 [],
                 |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?)),
             )?;
-            let mut stmt = connection.prepare("SELECT COALESCE(c.name,'Uncategorised'),SUM(t.amount_paise) FROM transactions t LEFT JOIN categories c ON c.id=t.category_id WHERE t.transaction_date >= ?1 AND t.transaction_date < ?2 AND t.direction='debit' AND t.transaction_kind IN ('expense','fee') GROUP BY COALESCE(c.name,'Uncategorised') ORDER BY SUM(t.amount_paise) DESC")?;
+            let mut stmt = connection.prepare("SELECT COALESCE(c.name,'Uncategorised'),SUM(t.amount_paise) FROM transactions t LEFT JOIN categories c ON c.id=t.category_id WHERE t.transaction_date >= ?1 AND t.transaction_date < ?2 AND t.direction='debit' AND t.transaction_kind IN ('expense','fee','unknown') GROUP BY COALESCE(c.name,'Uncategorised') ORDER BY SUM(t.amount_paise) DESC")?;
             let categories = stmt.query_map(params![range_start, next_start], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<Vec<_>, _>>()?;
-            let mut trend_stmt = connection.prepare(&format!("SELECT substr(date(transaction_date,'-{shift_days} days'),1,7),SUM(amount_paise) FROM transactions WHERE transaction_date>=?1 AND transaction_date<?2 AND direction='debit' AND transaction_kind IN ('expense','fee') GROUP BY 1 ORDER BY 1"))?;
+            let mut trend_stmt = connection.prepare(&format!("SELECT substr(date(transaction_date,'-{shift_days} days'),1,7),SUM(amount_paise) FROM transactions WHERE transaction_date>=?1 AND transaction_date<?2 AND direction='debit' AND transaction_kind IN ('expense','fee','unknown') GROUP BY 1 ORDER BY 1"))?;
             let trend = trend_stmt.query_map(params![trend_start, next_start], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<Vec<_>, _>>()?;
-            let mut merchant_stmt = connection.prepare("SELECT COALESCE(NULLIF(merchant_override,''),raw_description),SUM(amount_paise) FROM transactions WHERE transaction_date>=?1 AND transaction_date<?2 AND direction='debit' AND transaction_kind IN ('expense','fee') GROUP BY COALESCE(NULLIF(merchant_override,''),raw_description) ORDER BY SUM(amount_paise) DESC LIMIT 5")?;
+            let mut merchant_stmt = connection.prepare("SELECT COALESCE(NULLIF(merchant_override,''),raw_description),SUM(amount_paise) FROM transactions WHERE transaction_date>=?1 AND transaction_date<?2 AND direction='debit' AND transaction_kind IN ('expense','fee','unknown') GROUP BY COALESCE(NULLIF(merchant_override,''),raw_description) ORDER BY SUM(amount_paise) DESC LIMIT 5")?;
             let merchants = merchant_stmt.query_map(params![range_start, next_start], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<Vec<_>, _>>()?;
             let mut alerts_stmt = connection.prepare("SELECT c.name,b.amount_paise,COALESCE(SUM(CASE WHEN t.direction='debit' AND t.transaction_kind IN ('expense','fee') THEN t.amount_paise ELSE 0 END),0) FROM budgets b JOIN categories c ON c.id=b.category_id LEFT JOIN transactions t ON t.category_id=c.id AND t.transaction_date>=?1 AND t.transaction_date<?2 WHERE b.month=?3 GROUP BY c.name,b.amount_paise HAVING COALESCE(SUM(CASE WHEN t.direction='debit' AND t.transaction_kind IN ('expense','fee') THEN t.amount_paise ELSE 0 END),0)>b.amount_paise ORDER BY 3-b.amount_paise DESC")?;
             let budget_alerts = alerts_stmt.query_map(params![start, next_start, label], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<Result<Vec<_>, _>>()?;
+            let mut account_stmt = connection.prepare("SELECT a.name,COALESCE(SUM(CASE WHEN t.direction='debit' AND t.transaction_kind IN ('expense','fee','unknown') THEN t.amount_paise ELSE 0 END),0),COALESCE(SUM(CASE WHEN t.direction='credit' AND t.transaction_kind IN ('income','unknown') THEN t.amount_paise ELSE 0 END),0) FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE t.transaction_date>=?1 AND t.transaction_date<?2 GROUP BY a.id,a.name ORDER BY 2 DESC")?;
+            let accounts = account_stmt.query_map(params![range_start, next_start], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<Result<Vec<_>, _>>()?;
+            let mut daily_stmt = connection.prepare("SELECT transaction_date,SUM(amount_paise) FROM transactions WHERE transaction_date>=?1 AND transaction_date<?2 AND direction='debit' AND transaction_kind IN ('expense','fee','unknown') GROUP BY transaction_date ORDER BY transaction_date")?;
+            let daily = daily_stmt.query_map(params![start, next_start], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<Vec<_>, _>>()?;
+            let mut weekday_stmt = connection.prepare("SELECT CAST(strftime('%w',transaction_date) AS INTEGER),SUM(amount_paise) FROM transactions WHERE transaction_date>=?1 AND transaction_date<?2 AND direction='debit' AND transaction_kind IN ('expense','fee','unknown') GROUP BY 1")?;
+            let weekdays = weekday_stmt.query_map(params![range_start, next_start], |r| Ok((r.get::<_, u8>(0)?, r.get(1)?)))?.collect::<Result<Vec<_>, _>>()?;
+            let uncategorised = connection.query_row("SELECT COALESCE(SUM(amount_paise),0) FROM transactions WHERE transaction_date>=?1 AND transaction_date<?2 AND direction='debit' AND transaction_kind='unknown'", params![start, next_start], |r| r.get(0))?;
             Ok(OverviewSummary {
+                accounts,
+                daily,
+                weekdays,
+                uncategorised_paise: uncategorised,
                 period_start: start,
                 period_end,
                 income_paise: income,
@@ -937,7 +971,7 @@ mod tests {
                 overview.expense_paise,
                 overview.net_cash_paise
             ),
-            (10000, 3000, 7000)
+            (10000, 7000, 3000)
         );
         assert_eq!(
             (
@@ -952,16 +986,42 @@ mod tests {
         assert_eq!(
             overview.categories,
             vec![
-                ("Groceries".to_owned(), 2500),
-                ("Uncategorised".to_owned(), 500)
+                ("Uncategorised".to_owned(), 4500),
+                ("Groceries".to_owned(), 2500)
             ]
         );
         assert_eq!(
             overview.trend,
-            vec![("2026-02".to_owned(), 1000), ("2026-03".to_owned(), 3000)]
+            vec![("2026-02".to_owned(), 1000), ("2026-03".to_owned(), 7000)]
         );
-        assert_eq!(overview.merchants, vec![("Synthetic".to_owned(), 3000)]);
+        assert_eq!(overview.merchants, vec![("Synthetic".to_owned(), 7000)]);
         assert!(overview.budget_alerts.is_empty());
+        // Uncategorised money out is counted and reported separately.
+        assert_eq!(overview.uncategorised_paise, 4000);
+        assert_eq!(overview.accounts.len(), 1);
+        assert_eq!(overview.accounts[0].1, 7000);
+        assert_eq!(overview.daily.iter().map(|d| d.1).sum::<i64>(), 7000);
+    }
+
+    #[test]
+    fn overview_defaults_to_latest_period_with_data() {
+        let database = Database::open_in_memory().unwrap();
+        let account = AccountRepository::new(&database)
+            .create(AccountDraft {
+                name: "A".into(),
+                institution: None,
+                account_label: None,
+            })
+            .unwrap();
+        database.with_connection(|connection| {
+            connection.execute("INSERT INTO transactions (id,account_id,transaction_date,direction,amount_paise,raw_description,transaction_kind,is_reviewed,fingerprint,created_at,updated_at) VALUES ('x',?1,'2026-09-12','debit',900,'Synthetic','unknown',0,'fp','2026-09-12T00:00:00Z','2026-09-12T00:00:00Z')", params![account.id])?;
+            Ok(())
+        }).unwrap();
+        let overview = OverviewRepository::new(&database)
+            .summary("2026-11-06")
+            .unwrap();
+        assert_eq!(overview.period_label, "2026-09");
+        assert_eq!(overview.expense_paise, 900);
     }
 
     #[test]

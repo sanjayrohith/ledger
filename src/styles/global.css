@@ -199,3 +199,34 @@ input[type="date"] { color-scheme: dark; }
 }
 
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; } }
+
+/* Overview charts */
+.notice { margin: 16px 0 0; padding: 12px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text-secondary, var(--muted)); font-size: 13px; line-height: 20px; }
+.donut-wrap { display: grid; grid-template-columns: 180px 1fr; gap: 24px; align-items: center; }
+.donut { width: 180px; height: 180px; }
+.donut circle { transition: opacity 150ms var(--ease), stroke-width 150ms var(--ease); }
+.donut-figure { fill: var(--text); font: 500 15px var(--font-mono); font-variant-numeric: tabular-nums; }
+.donut-caption { fill: var(--muted); font-size: 8px; }
+.legend { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.legend li { display: grid; grid-template-columns: 12px 1fr auto auto; gap: 12px; align-items: center; min-height: 32px; padding: 0 8px; border-radius: 8px; font-size: 13px; }
+.legend li.on { background: var(--surface-raised); }
+.legend i { width: 8px; height: 8px; border-radius: 50%; }
+.legend small { color: var(--muted); }
+.legend strong { font-weight: 500; min-width: 88px; text-align: right; }
+.account-bars { display: grid; gap: 20px; margin-top: 16px !important; margin: 0; padding: 0; list-style: none; }
+.account-head { margin-bottom: 8px; font-size: 13px; }
+.pair { display: grid; grid-template-columns: 28px 1fr 96px; gap: 12px; align-items: center; min-height: 24px; }
+.pair-label { color: var(--muted); font-size: 12px; }
+.pair .bar { height: 8px; border-radius: 4px; background: var(--surface-raised); overflow: hidden; }
+.pair .bar span { display: block; height: 100%; border-radius: 4px; }
+.pair .bar .out { background: var(--accent-strong); }
+.pair .bar .in { background: #5a5f5c; }
+.pair strong { font-weight: 500; font-size: 13px; text-align: right; }
+.daily, .weekday { display: flex; align-items: end; gap: 3px; height: 160px; margin-top: 16px; border-bottom: 1px solid var(--border-strong); }
+.daily > div { flex: 1; height: 100%; display: flex; align-items: end; }
+.daily span, .weekday span { display: block; width: 100%; background: #4a4a4f; border-radius: 3px 3px 0 0; transition: background-color 150ms var(--ease); }
+.weekday { gap: 12px; }
+.weekday > div { flex: 1; height: 100%; display: grid; grid-template-rows: 1fr auto; align-items: end; gap: 8px; text-align: center; }
+.weekday small { color: var(--muted); font-family: var(--font-mono); font-size: 11px; line-height: 16px; }
+.daily span.peak, .weekday span.peak { background: var(--accent-strong); }
+@media (max-width: 900px) { .donut-wrap { grid-template-columns: 1fr; justify-items: center; } .legend { width: 100%; } }

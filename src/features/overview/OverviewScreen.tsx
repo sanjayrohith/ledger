@@ -6,6 +6,7 @@ import {
   type OverviewSummary,
   type RecurringSuggestion
 } from "../../app/commands";
+import { AccountBars, DailyBars, Donut, WeekdayBars, money, toSlices } from "./charts";
 
 const inr = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 });
 const paise = (value: number) => inr.format(value / 100);
@@ -92,18 +93,51 @@ export function OverviewScreen({ onError }: Props) {
         <Metric label="Net cash movement" amount={summary.netCashPaise} note={`${signed(summary.netCashPaise - (summary.previousIncomePaise - summary.previousExpensePaise))} vs previous month`} />
       </div>
 
+      {summary.uncategorisedPaise > 0 && (
+        <p className="notice">
+          {money(summary.uncategorisedPaise)} of this period's money out has no category yet and is counted as Uncategorised.
+          Add rules in Settings or edit rows in Transactions to sort it.
+        </p>
+      )}
+
+      <div className="insight-grid wide">
+        <div className="panel">
+          <h2>Where spending went</h2>
+          <p className="range-note">{rangeLabel}</p>
+          <Donut slices={toSlices(summary.categories)} centreLabel="money out" />
+        </div>
+        <div className="panel">
+          <h2>By account</h2>
+          <p className="range-note">{rangeLabel}</p>
+          <AccountBars rows={summary.accounts ?? []} />
+        </div>
+      </div>
+
+      <div className="insight-grid wide">
+        <div className="panel">
+          <h2>Day by day</h2>
+          <p className="range-note">{summary.periodStart} to {summary.periodEnd}</p>
+          <DailyBars days={summary.daily ?? []} start={summary.periodStart} end={summary.periodEnd} />
+        </div>
+        <div className="panel">
+          <h2>Busiest weekdays</h2>
+          <p className="range-note">{rangeLabel}</p>
+          <WeekdayBars values={summary.weekdays ?? []} />
+        </div>
+      </div>
+
       <div className="insight-grid wide">
         <div className="panel">
           <h2>Spending trend</h2>
           <Trend points={summary.trend} />
           <p className="accessible-summary">
-            Last {Math.max(6, rangeMonths)} periods of spending. Transfers and unknown transactions are excluded.
+            Last {Math.max(6, rangeMonths)} periods of spending. Transfers are excluded; uncategorised money out is included.
           </p>
         </div>
         <div className="panel">
-          <h2>Where spending went</h2>
+          <h2>Top categories</h2>
           <p className="range-note">{rangeLabel}</p>
-          <Bars values={summary.categories} />
+          <Bars values={summary.categories.slice(0, 6)} />
         </div>
       </div>
 
