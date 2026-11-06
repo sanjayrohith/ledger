@@ -206,7 +206,7 @@ input[type="date"] { color-scheme: dark; }
 .donut { width: 180px; height: 180px; }
 .donut circle { transition: opacity 150ms var(--ease), stroke-width 150ms var(--ease); }
 .donut-figure { fill: var(--text); font: 500 15px var(--font-mono); font-variant-numeric: tabular-nums; }
-.donut-caption { fill: var(--muted); font-size: 8px; }
+.donut-caption { fill: var(--muted); font-size: 9.5px; }
 .legend { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
 .legend li { display: grid; grid-template-columns: 12px 1fr auto auto; gap: 12px; align-items: center; min-height: 32px; padding: 0 8px; border-radius: 8px; font-size: 13px; }
 .legend li.on { background: var(--surface-raised); }
@@ -236,7 +236,7 @@ input[type="date"] { color-scheme: dark; }
 .chip { min-height: 32px; padding: 0 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: transparent; color: var(--muted); font-size: 13px; }
 .chip.on { background: var(--surface-raised); color: var(--text); }
 .timeline { display: flex; gap: 4px; margin-top: 16px; overflow-x: auto; padding-bottom: 4px; }
-button.month-col { flex: 1 0 44px; display: grid; grid-template-rows: 160px auto; gap: 8px; padding: 8px 4px; border: 1px solid transparent; border-radius: 10px; background: transparent; text-align: center; }
+button.month-col { flex: 1 0 44px; display: grid; grid-template-rows: 200px auto; gap: 8px; padding: 8px 4px; border: 1px solid transparent; border-radius: 10px; background: transparent; text-align: center; }
 button.month-col:hover { background: var(--surface-raised); }
 button.month-col.on { background: var(--surface-raised); border-color: var(--border-strong); }
 .month-plot { position: relative; display: flex; align-items: end; justify-content: center; }
@@ -259,3 +259,10 @@ button.link:hover { background: transparent; text-decoration: underline; }
 .month-out em { position: absolute; bottom: calc(100% + 4px); left: 50%; transform: translateX(-50%); color: var(--muted); font: normal 11px var(--font-mono); white-space: nowrap; }
 button.month-col.on .month-out em { color: var(--text); }
 .insight-grid.wide > .panel { align-self: start; }
+.stack { display: grid; gap: 16px; align-content: start; }
+.stack > .panel { margin: 0; }
+button.month-col:focus-visible, .chip:focus-visible, button.link:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
+.month-table small.up, .month-table small.down { font-family: var(--font-mono); }
+.overview-screen { display: grid; gap: 16px; }
+.overview-screen > * { margin-top: 0; margin-bottom: 0; }
+.overview-screen > .insight-grid { margin: 0; }

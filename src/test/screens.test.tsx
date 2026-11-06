@@ -166,7 +166,7 @@ describe("Overview screen", () => {
     expect(screen.queryByLabelText("Month")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Mar 2026: spent ₹2,500, received ₹4,000/ })).toBeInTheDocument();
     const spent = document.querySelector(".metric") as HTMLElement;
-    expect(within(spent).getByText("₹2,500.00")).toBeInTheDocument();
+    expect(within(spent).getByText("₹2,500")).toBeInTheDocument();
   });
 
   it("focuses one month when its column is chosen and compares with the month before", async () => {
@@ -176,7 +176,7 @@ describe("Overview screen", () => {
     await waitFor(() =>
       expect(mocked.getOverviewSummary).toHaveBeenLastCalledWith(expect.any(String), { month: "2026-03", rangeMonths: 1 })
     );
-    expect(await screen.findByText("−₹500.00 vs previous month")).toBeInTheDocument();
+    expect(await screen.findByText("−₹500 vs previous month")).toBeInTheDocument();
     expect(screen.getByText("Day by day")).toBeInTheDocument();
   });
 

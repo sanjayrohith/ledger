@@ -8,8 +8,14 @@ import {
 } from "../../app/commands";
 import { AccountBars, DailyBars, Donut, MonthTable, MonthTimeline, WeekdayBars, monthName, money, toSlices } from "./charts";
 
-const inr = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 });
+const inr = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
 const paise = (value: number) => inr.format(value / 100);
+const formatStamp = (iso: string) => {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime())
+    ? iso
+    : date.toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+};
 const signed = (value: number) => `${value >= 0 ? "+" : "−"}${paise(Math.abs(value))}`;
 
 type Props = { onError: (error: string) => void };
@@ -56,7 +62,6 @@ export function OverviewScreen({ onError }: Props) {
   return (
     <section className="overview-screen">
       <div className="page-heading">
-        <p className="eyebrow">Overview</p>
         <h1>{isAll ? "All months" : monthName(summary.periodLabel, true)}</h1>
         <p>{coverage}</p>
         <p className="period-note">
@@ -132,49 +137,43 @@ export function OverviewScreen({ onError }: Props) {
             </>
           )}
         </div>
+        <div className="stack">
+          <div className="panel">
+            <h2>Busiest weekdays</h2>
+            <p className="range-note">{scope}</p>
+            <WeekdayBars values={summary.weekdays ?? []} />
+          </div>
         <div className="panel">
-          <h2>Busiest weekdays</h2>
-          <p className="range-note">{scope}</p>
-          <WeekdayBars values={summary.weekdays ?? []} />
+          <h2>Observations</h2>
+          {summary.budgetAlerts.length > 0 ? (
+            <ul className="insight-list">
+              {summary.budgetAlerts.map(([name, budget, spent]) => (
+                <li key={name}>
+                  <strong>{name}</strong> is {paise(spent - budget)} over its {paise(budget)} budget.
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <ul className="insight-list">
+              {top && (
+                <li>
+                  <strong>{top[0]}</strong> is your largest category in {scope} at {paise(top[1])}.
+                </li>
+              )}
+              {!isAll && <li>Spending is {change >= 0 ? "up" : "down"} {paise(Math.abs(change))} versus the previous month.</li>}
+              {isAll && biggest && <li>{monthName(biggest[0], true)} was your heaviest month at {paise(biggest[1])}.</li>}
+              <li>Use Budgets to set a limit before reducing a category.</li>
+            </ul>
+          )}
+          <p className="accessible-summary">These are observations from imported transactions, not financial advice.</p>
         </div>
-      </div>
-
-      <div className="insight-grid">
-        <div className="panel">
-          <h2>Top categories</h2>
-          <p className="range-note">{scope}</p>
-          <Bars values={summary.categories.slice(0, 6)} />
-        </div>
-        <div className="panel">
-          <h2>Top merchants</h2>
-          <p className="range-note">{scope}</p>
-          <Bars values={summary.merchants} />
         </div>
       </div>
 
       <div className="panel">
-        <h2>Observations</h2>
-        {summary.budgetAlerts.length > 0 ? (
-          <ul className="insight-list">
-            {summary.budgetAlerts.map(([name, budget, spent]) => (
-              <li key={name}>
-                <strong>{name}</strong> is {paise(spent - budget)} over its {paise(budget)} budget.
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <ul className="insight-list">
-            {top && (
-              <li>
-                <strong>{top[0]}</strong> is your largest category in {scope} at {paise(top[1])}.
-              </li>
-            )}
-            {!isAll && <li>Spending is {change >= 0 ? "up" : "down"} {paise(Math.abs(change))} versus the previous month.</li>}
-            {isAll && biggest && <li>{monthName(biggest[0], true)} was your heaviest month at {paise(biggest[1])}.</li>}
-            <li>Use Budgets to set a limit before reducing a category.</li>
-          </ul>
-        )}
-        <p className="accessible-summary">These are observations from imported transactions, not financial advice.</p>
+        <h2>Top merchants</h2>
+        <p className="range-note">{scope}</p>
+        <Bars values={summary.merchants} />
       </div>
 
       {recurring.length > 0 && (

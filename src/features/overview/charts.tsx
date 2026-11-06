@@ -203,7 +203,7 @@ export function MonthTable({
               <td><button type="button" className="link" onClick={() => onSelect(label)}>{monthName(label, true)}</button></td>
               <td className="mono">
                 {money(out)}
-                {delta !== null && delta !== 0 && <small className={delta > 0 ? "up" : "down"}>{delta > 0 ? "▲" : "▼"} {money(Math.abs(delta))}</small>}
+                {delta !== null && delta !== 0 && <small className={delta > 0 ? "up" : "down"}>{delta > 0 ? "+" : "−"}{money(Math.abs(delta))}</small>}
               </td>
               <td className="mono">{money(inn)}</td>
               <td className="mono">{inn - out < 0 ? "−" : "+"}{money(Math.abs(inn - out))}</td>
